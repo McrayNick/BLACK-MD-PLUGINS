@@ -721,6 +721,62 @@ module.exports = [
 },
 
   {
+  command: ['imageedit2'],
+  aliases: ['aiedit'],
+  description: 'Generate an AI image from a prompt (optional: reply to an image for context)',
+  category: 'media',
+  handler: async (client, m, { reply, text, msgR }) => {
+    if (!text) return reply(
+      '📌 Describe what you want.\n\n' +
+      '*Example:* .imageedit make it look like an oil painting\n\n' +
+      '💡 _Reply to an image for better context._'
+    );
+
+    try {
+      await m.reply('🎨 _Generating AI image... please wait_');
+
+      let prompt = text;
+
+      // If an image is quoted, analyze it first to enrich the prompt
+      if (msgR?.imageMessage) {
+        try {
+          const { uploadToUguu } = require('../lib/uploads');
+          const filePath = await client.downloadAndSaveMediaMessage(msgR.imageMessage);
+          const imageUrl = await uploadToUguu(filePath);
+          try { fs.unlinkSync(filePath); } catch {}
+
+          const visionRes = await fetch(
+            `https://api.bk9.dev/ai/vision?q=Describe+this+image+in+detail&image_url=${encodeURIComponent(imageUrl)}&model=meta-llama/llama-4-scout-17b-16e-instruct`
+          );
+          const visionData = await visionRes.json();
+          if (visionData?.status && visionData?.BK9) {
+            prompt = `${text}, based on this scene: ${visionData.BK9}`;
+          }
+        } catch {}
+        // falls through with just the user prompt if vision fails
+      }
+
+      const seed = Math.floor(Math.random() * 999999);
+      const genUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?nologo=true&width=1024&height=1024&seed=${seed}`;
+
+      const imgRes = await fetch(genUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+      });
+      if (!imgRes.ok) throw new Error(`Generation failed (${imgRes.status})`);
+      const imgBuffer = await imgRes.buffer();
+
+      await client.sendMessage(m.chat, {
+        image: imgBuffer,
+        caption: `🎨 *AI Image*\n📝 *Prompt:* ${text}`
+      }, { quoted: m });
+
+    } catch (err) {
+      reply('❌ Error: ' + err.message);
+    }
+  }
+},
+
+  {
   command: ['remini'],
   aliases: ['upscale', 'enhance', 'hd'],
   description: 'Enhance a quoted image using AI (Remini)',

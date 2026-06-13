@@ -367,8 +367,8 @@ module.exports = [
     description: 'Get a random pickup line',
     category: 'utility',
     handler: async (client, m) => {
-      const res = await global.axios.get('https://api.popcat.xyz/pickuplines');
-      m.reply(`💘 ${res.data?.line}`);
+      const res = await global.axios.get('https://rizzapi.vercel.app/random');
+      m.reply(`💘 ${res.data?.text}`);
     }
   },
 

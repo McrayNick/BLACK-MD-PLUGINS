@@ -356,7 +356,7 @@ module.exports = [
     description: 'Get an inspirational quote',
     category: 'utility',
     handler: async (client, m) => {
-      const res = await global.axios.get('https://api.quotable.io/random');
+      const res = await global.axios.get('https://favqs.com/api/qotd');
       m.reply(`💬 *"${res.data.content}"*\n\n— _${res.data.author}_`);
     }
   },
@@ -366,7 +366,7 @@ module.exports = [
     description: 'Get a random pickup line',
     category: 'utility',
     handler: async (client, m) => {
-      const res = await global.axios.get('https://api.jcwyt.com/pickup');
+      const res = await global.axios.get('https://api.popcat.xyz/pickuplines');
       m.reply(`💘 ${res.data?.pickup || res.data}`);
     }
   },

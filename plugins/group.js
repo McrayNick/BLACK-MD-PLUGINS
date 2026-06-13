@@ -555,7 +555,7 @@ module.exports = [
     }
   },
 
-  {
+    {
     command: ['foreigners'],
     description: 'List or remove members with foreign country codes',
     category: 'group',
@@ -565,26 +565,40 @@ module.exports = [
       if (!isBotAdmin) return reply(botAdmin);
       const { jidNormalizedUser } = require('@whiskeysockets/baileys');
       const { mycode } = require('../set');
-      let foreigners = groupMetadata.participants
+      const botJid = jidNormalizedUser(client.user.id);
+      const code = mycode || '254';
+
+      const foreigners = groupMetadata.participants
         .filter(p => !p.admin)
-        .map(p => p.id)
-        .filter(id => id && !id.startsWith(mycode || '254') && id !== jidNormalizedUser(client.user.id));
+        .filter(p => {
+          if (!p.id) return false;
+          if (jidNormalizedUser(p.id) === botJid) return false;
+          const phone = p.pn ? String(p.pn) : p.id.split('@')[0].split(':')[0];
+          return !phone.startsWith(code);
+        });
+
+      const foreignerIds = foreigners.map(p => p.id);
+
       if (!args || !args[0]) {
-        if (foreigners.length === 0) return m.reply('No foreigners detected.');
-        let msg = `𝗙𝗼𝗿𝗲𝗶𝗴𝗻𝗲𝗿𝘀 𝗮𝗿𝗲 𝗺𝗲𝗺𝗯𝗲𝗿𝘀 𝘄𝗵𝗼𝘀𝗲 𝗰𝗼𝘂𝗻𝘁𝗿𝘆 𝗰𝗼𝗱𝗲 𝗶𝘀 𝗻𝗼𝘁 ${mycode || '254'}. 𝗧𝗵𝗲 𝗳𝗼𝗹𝗹𝗼𝘄𝗶𝗻𝗴 ${foreigners.length} 𝗳𝗼𝗿𝗲𝗶𝗴𝗻𝗲𝗿𝘀 𝘄𝗲𝗿𝗲 𝗱𝗲𝘁𝗲𝗰𝘁𝗲𝗱:- \n`;
-        for (let id of foreigners) msg += `𓅂 @${id.split('@')[0]}\n`;
-        msg += `\n𝗧𝗼 𝗿𝗲𝗺𝗼𝘃𝗲 𝘁𝗵𝗲𝗺 𝘀𝗲𝗻𝗱 foreigners -x`;
-        client.sendMessage(m.chat, { text: msg, mentions: foreigners }, { quoted: m });
+        if (foreigners.length === 0) return m.reply(`No foreigners detected. (Country code: ${code})`);
+        let msg = `𝗙𝗼𝗿𝗲𝗶𝗴𝗻𝗲𝗿𝘀 𝗮𝗿𝗲 𝗺𝗲𝗺𝗯𝗲𝗿𝘀 𝘄𝗵𝗼𝘀𝗲 𝗰𝗼𝘂𝗻𝘁𝗿𝘆 𝗰𝗼𝗱𝗲 𝗶𝘀 𝗻𝗼𝘁 ${code}. 𝗧𝗵𝗲 𝗳𝗼𝗹𝗹𝗼𝘄𝗶𝗻𝗴 ${foreigners.length} 𝗳𝗼𝗿𝗲𝗶𝗴𝗻𝗲𝗿𝘀 𝘄𝗲𝗿𝗲 𝗱𝗲𝘁𝗲𝗰𝘁𝗲𝗱:- \n`;
+        for (const p of foreigners) {
+          const phone = p.pn ? String(p.pn) : p.id.split('@')[0];
+          msg += `𓅂 @${phone}\n`;
+        }
+        msg += `\n𝗧𝗼 𝗿𝗲𝗺𝗼𝘃𝗲 𝘁𝗵𝗲𝗺 𝘀𝗲𝗻𝗱 *foreigners -x*`;
+        client.sendMessage(m.chat, { text: msg, mentions: foreignerIds }, { quoted: m });
       } else if (args[0] === '-x') {
-        setTimeout(() => {
-          client.sendMessage(m.chat, {
-            text: `𝐁𝐋𝐀𝐂𝐊-𝐌𝐃 𝘄𝗶𝗹𝗹 𝗻𝗼𝘄 𝗿𝗲𝗺𝗼𝘃𝗲 𝗮𝗹𝗹 ${foreigners.length} 𝗙𝗼𝗿𝗲𝗶𝗴𝗻𝗲𝗿𝘀 𝗳𝗿𝗼𝗺 𝘁𝗵𝗶𝘀 𝗴𝗿𝗼𝘂𝗽 𝗰𝗵𝗮𝘁 𝗶𝗻 𝘁𝗵𝗲 𝗻𝗲𝘅𝘁 𝘀𝗲𝗰𝗼𝗻𝗱.\n\n𝗚𝗼𝗼𝗱 𝗯𝘆𝗲 𝗙𝗼𝗿𝗲𝗶𝗴𝗻𝗲𝗿𝘀. 𝗧𝗵𝗶𝘀 𝗽𝗿𝗼𝗰𝗲𝘀𝘀 𝗰𝗮𝗻𝗻𝗼𝘁 𝗯𝗲 𝘁𝗲𝗿𝗺𝗶𝗻𝗮𝘁𝗲𝗱⚠️`
-          }, { quoted: m });
-          setTimeout(() => {
-            client.groupParticipantsUpdate(m.chat, foreigners, 'remove');
-            setTimeout(() => { m.reply('𝗔𝗻𝘆 𝗿𝗲𝗺𝗮𝗶𝗻𝗶𝗻𝗴 𝗙𝗼𝗿𝗲𝗶𝗴𝗻𝗲𝗿 ?🌚.'); }, 1000);
-          }, 1000);
-        }, 1000);
+        await client.sendMessage(m.chat, {
+          text: `𝐁𝐋𝐀𝐂𝐊-𝐌𝐃 𝘄𝗶𝗹𝗹 𝗻𝗼𝘄 𝗿𝗲𝗺𝗼𝘃𝗲 𝗮𝗹𝗹 ${foreigners.length} 𝗙𝗼𝗿𝗲𝗶𝗴𝗻𝗲𝗿𝘀 𝗳𝗿𝗼𝗺 𝘁𝗵𝗶𝘀 𝗴𝗿𝗼𝘂𝗽 𝗰𝗵𝗮𝘁.\n\n𝗚𝗼𝗼𝗱𝗯𝘆𝗲 𝗙𝗼𝗿𝗲𝗶𝗴𝗻𝗲𝗿𝘀 ⚠️`
+        }, { quoted: m });
+        const batchSize = 5;
+        for (let i = 0; i < foreignerIds.length; i += batchSize) {
+          const batch = foreignerIds.slice(i, i + batchSize);
+          try { await client.groupParticipantsUpdate(m.chat, batch, 'remove'); } catch (e) {}
+          await new Promise(r => setTimeout(r, 1500));
+        }
+        m.reply('𝗔𝗻𝘆 𝗿𝗲𝗺𝗮𝗶𝗻𝗶𝗻𝗴 𝗙𝗼𝗿𝗲𝗶𝗴𝗻𝗲𝗿 ?🌚.');
       }
     }
   },

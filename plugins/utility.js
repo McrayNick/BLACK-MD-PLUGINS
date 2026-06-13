@@ -343,7 +343,7 @@ module.exports = [
       try {
         const response = await global.axios.get('https://official-joke-api.appspot.com/random_joke');
         const joke = response.data;
-        const jokeMessage = `😂 *Below is a random joke for you* 😂\n\n*${joke.setup}*\n\n${joke.punchline} 😄`;
+        const jokeMessage = `*${joke.setup}*\n\n*${joke.punchline}* 😄`;
         return reply(jokeMessage);
       } catch (e) {
         return reply("Couldn't fetch a joke right now. Please try again later.");
@@ -371,6 +371,19 @@ module.exports = [
       m.reply(`💘 ${res.data?.text}`);
     }
   },
+
+  {
+    command: ['funfact'],
+    aliases: ['fact'],
+    description: 'Get a random pickup line',
+    category: 'utility',
+    handler: async (client, m) => {
+  const url = 'https://uselessfacts.jsph.pl/random.json?language=en';
+        const response = await global.axios.get(url);
+        const fact = response.data.text;
+  m.reply(fact)
+   }
+ },
 
   {
     command: ['repo'],

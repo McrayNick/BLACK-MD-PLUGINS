@@ -357,7 +357,8 @@ module.exports = [
     category: 'utility',
     handler: async (client, m) => {
       const res = await global.axios.get('https://favqs.com/api/qotd');
-      m.reply(`💬 *"${res.data.content}"*\n\n— _${res.data.author}_`);
+      const { body, author } = res.data.quote;
+      m.reply(`💬 *"${body}"*\n\n—BY _${author}_`);
     }
   },
 
@@ -367,7 +368,7 @@ module.exports = [
     category: 'utility',
     handler: async (client, m) => {
       const res = await global.axios.get('https://api.popcat.xyz/pickuplines');
-      m.reply(`💘 ${res.data?.pickup || res.data}`);
+      m.reply(`💘 ${res.data?.line}`);
     }
   },
 

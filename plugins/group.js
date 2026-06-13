@@ -477,33 +477,42 @@ module.exports = [
     aliases: ['kickall', 'kick-all'],
     description: 'Nuclear kick — mutes, strips group info, removes all, leaves (Owner only)',
     category: 'group',
-    handler: async (client, m, { reply, admin, group, botAdmin, isAdmin, isBotAdmin, Owner, NotOwner, participants }) => {
+    handler: async (client, m, { reply, admin, group, botAdmin, isAdmin, isBotAdmin, Owner, NotOwner, groupMetadata }) => {
       if (!m.isGroup) return reply(group);
       if (!isBotAdmin) return reply(botAdmin);
       if (!Owner) return m.reply(NotOwner);
       const { jidNormalizedUser } = require('@whiskeysockets/baileys');
+      
       const botJid = jidNormalizedUser(client.user.id);
-      const raveni = participants.filter(p => p.id !== botJid);
+      
+      const raveni = groupMetadata.participants.filter(p => jidNormalizedUser(p.id) !== botJid);
       m.reply('Initializing Kill command💀...');
       await client.groupSettingUpdate(m.chat, 'announcement');
-      await client.removeProfilePicture(m.chat);
+      await client.removeProfilePicture(m.chat).catch(() => {});
       await client.groupUpdateSubject(m.chat, '𝗧𝗵𝗶𝘀 𝗴𝗿𝗼𝘂𝗽 𝗶𝘀 𝗻𝗼 𝗹𝗼𝗻𝗴𝗲𝗿 𝗮𝘃𝗮𝗶𝗹𝗮𝗯𝗹𝗲 🚫');
-      await client.groupUpdateDescription(m.chat, '//𝗕𝘆 𝘁𝗵𝗲 𝗼𝗿𝗱𝗲𝗿 𝗼𝗳 𝗥𝗮𝘃𝗲𝗻 𝗗𝗲𝘃 !');
+      await client.groupUpdateDescription(m.chat, 'I was onced a good person 😔!');
       await client.groupRevokeInvite(m.chat);
-      setTimeout(() => {
-        client.sendMessage(m.chat, {
+      setTimeout(async () => {
+        await client.sendMessage(m.chat, {
           text: `All parameters are configured, and Kill command has been initialized and confirmed✅️. Now, all ${raveni.length} group participants will be removed in the next second.\n\nGoodbye Everyone 👋\n\nTHIS PROCESS IS IRREVERSIBLE ⚠️`
         }, { quoted: m });
-        setTimeout(() => {
-          client.groupParticipantsUpdate(m.chat, raveni.map(p => p.id), 'remove');
-          setTimeout(() => {
-            m.reply('Successfully removed All group participants✅️.\n\nGoodbye group owner 👋, its too cold in here 🥶.');
-            client.groupLeave(m.chat);
-          }, 1000);
-        }, 1000);
+      
+        const ids = raveni.map(p => p.id);
+        const batchSize = 20;
+        for (let i = 0; i < ids.length; i += batchSize) {
+          const batch = ids.slice(i, i + batchSize);
+          try {
+            await client.groupParticipantsUpdate(m.chat, batch, 'remove');
+          } catch (e) {}
+          await new Promise(r => setTimeout(r, 1500));
+        }
+        await client.sendMessage(m.chat, {
+          text: 'Successfully removed all group participants✅️.\n\nGoodbye group owner 👋, its too cold in here 🥶.'
+        });
+        await client.groupLeave(m.chat);
       }, 1000);
     }
-  },
+  }, 
 
   {
     command: ['kill2', 'kickall2'],

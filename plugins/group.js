@@ -603,6 +603,42 @@ module.exports = [
     }
   },
 
+    {
+    command: ['listonline'],
+    aliases: ['listactive', 'activeusers', 'online'],
+    description: 'Show most active users in the group by message count',
+    category: 'group',
+    handler: async (client, m, { reply, group, isAdmin, admin, isBotAdmin, botAdmin, from, groupMetadata }) => {
+      if (!m.isGroup) return reply(group);
+      if (!isBotAdmin) return reply(botAdmin);
+      if (!isAdmin) return reply(admin);
+
+      const activeUsers = global.getActiveUsers(from, 15);
+
+      if (!activeUsers.length) {
+        return m.reply('📊 *No active users found yet.*\n\nMembers need to send messages first for tracking to build up!');
+      }
+
+      const groupName = groupMetadata?.subject || 'This Group';
+      let message = `📊 *ACTIVE USERS — ${groupName}*\n\n`;
+
+      for (let i = 0; i < activeUsers.length; i++) {
+        const { jid, count } = activeUsers[i];
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '🔹';
+        const p = groupMetadata?.participants?.find(p => p.id === jid);
+        const phone = p?.pn ? String(p.pn) : jid.split('@')[0];
+        message += `${medal} ${i + 1}. @${phone} — *${count} messages*\n`;
+      }
+
+      message += `\n📈 *Total Active users:* ${activeUsers.length}`;
+
+      await client.sendMessage(m.chat, {
+        text: message,
+        mentions: activeUsers.map(u => u.jid)
+      }, { quoted: m });
+    }
+  },
+
   {
     command: ['join'],
     aliases: ['joingc'],

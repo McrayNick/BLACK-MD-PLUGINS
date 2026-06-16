@@ -151,7 +151,7 @@ module.exports = [
         if (!data.status || !data.result) return m.reply('❌ Could not fetch FIFA standings.');
 
         const tables = data.result.table?.[0]?.data?.tables || [];
-        const groups = tables.filter(g => /Grp\.\s*[A-H]/i.test(g.leagueName));
+        const groups = tables.filter(g => /Grp\.\s*[A-L]/i.test(g.leagueName));
 
         if (!groups.length) return m.reply('❌ No group standings found for 2026.');
 

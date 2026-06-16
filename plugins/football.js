@@ -137,52 +137,49 @@ module.exports = [
     }
   },
 
-  {
-  command: ['fifa'],
-  aliases: ['ffa', 'worldcup'],
-  description: 'FIFA 2026 World Cup group standings',
-  category: 'football',
-  handler: async (client, m, { api }) => {
-    try {
-      await client.sendMessage(m.chat, { react: { text: '🌍', key: m.key } });
-      const res = await axios.get(`${api}/fifastandings`);
-      const data = res.data;
+    {
+    command: ['fifa'],
+    aliases: ['ffa', 'worldcup'],
+    description: 'FIFA 2026 World Cup group standings',
+    category: 'football',
+    handler: async (client, m, { api }) => {
+      try {
+        await client.sendMessage(m.chat, { react: { text: '🌍', key: m.key } });
+        const res = await axios.get(`${api}/fifastandings`);
+        const data = res.data;
 
-      if (!data.status || !data.result) return m.reply('❌ Could not fetch FIFA standings.');
+        if (!data.status || !data.result) return m.reply('❌ Could not fetch FIFA standings.');
 
-      // Filter for 2026 season groups A–H
-      const tables = data.result.table?.[0]?.data?.tables || [];
-      const groups = tables.filter(g =>
-        /Grp\.\s*[A-H]/i.test(g.leagueName)
-      );
+        const tables = data.result.table?.[0]?.data?.tables || [];
+        const groups = tables.filter(g => /Grp\.\s*[A-H]/i.test(g.leagueName));
 
-      if (!groups.length) return m.reply('❌ No group standings found for 2026.');
+        if (!groups.length) return m.reply('❌ No group standings found for 2026.');
 
-      let text = `🏆 *FIFA World Cup 2026*\n*Group Standings*\n`;
+        const medals = ['🥇', '🥈', '🥉', '🔹'];
 
-      for (const group of groups) {
-        const name   = group.leagueName.replace('Grp.', 'Group').trim();
-        const teams  = group.table?.all || [];
-        text += `\n━━━━━━━━━━━━━━━━\n`;
-        text += `📌 *${name}*\n`;
-        text += `${'Pos  Team'.padEnd(22)}Pl  W  D  L  Pts\n`;
-        for (const t of teams) {
-          const pos  = String(t.idx).padEnd(4);
-          const team = t.shortName.padEnd(18);
-          const pl   = String(t.played).padEnd(4);
-          const w    = String(t.wins).padEnd(3);
-          const d    = String(t.draws).padEnd(3);
-          const l    = String(t.losses).padEnd(3);
-          text += `${pos}${team}${pl}${w}${d}${l}${t.pts}\n`;
+        let text = `🏆 *FIFA World Cup 2026*\n`;
+
+        for (const group of groups) {
+          const name  = group.leagueName.replace('Grp.', 'Group').trim();
+          const teams = group.table?.all || [];
+
+          text += `\n━━━━━━━━━━━━━━━━━\n`;
+          text += `🚩 *${name}*\n`;
+          text += `━━━━━━━━━━━━━━━━━\n`;
+
+          for (const t of teams) {
+            const icon = medals[t.idx - 1] || '🔹';
+            text += `${icon} *${t.shortName || t.name}*\n`;
+            text += `   Pl:${t.played} W:${t.wins} D:${t.draws} L:${t.losses} | *${t.pts} pts*\n`;
+          }
         }
-      }
 
-      m.reply(text);
-    } catch (e) {
-      m.reply('❌ Error fetching FIFA standings.');
+        m.reply(text);
+      } catch (e) {
+        m.reply('❌ Error fetching FIFA standings.');
+      }
     }
-  }
-},
+  },
 
   {
     command: ['euro'],

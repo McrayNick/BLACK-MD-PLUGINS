@@ -137,7 +137,7 @@ module.exports = [
     }
   },
 
-    {
+      {
     command: ['fifa'],
     aliases: ['ffa', 'worldcup'],
     description: 'FIFA 2026 World Cup group standings',
@@ -155,12 +155,6 @@ module.exports = [
 
         if (!groups.length) return m.reply('❌ No group standings found for 2026.');
 
-        const medals = ['🥇', '🥈', '🔹', '🔹'];
-        const gd = t.goalDifference ?? t.goalsDiff ?? t.gd ??
-                       (typeof t.goalsFor === 'number' && typeof t.goalsAgainst === 'number'
-                         ? t.goalsFor - t.goalsAgainst
-                         : '?');
-
         let text = `🏆 *FIFA World Cup 2026*\n`;
 
         for (const group of groups) {
@@ -171,11 +165,20 @@ module.exports = [
           text += `🚩 *${name}*\n`;
           text += `━━━━━━━━━━━━━━━━━\n`;
 
-          for (const t of teams) {
-            const icon = medals[t.idx - 1] || '🔹';
+          teams.forEach((t, i) => {
+            const pos = i + 1;
+            const icon = pos === 1 ? '🥇'
+                       : pos === 2 ? '🥈'
+                       : '🔹';
+
+            const gd = t.goalDifference ?? t.goalsDiff ?? t.gd ??
+                       (typeof t.goalsFor === 'number' && typeof t.goalsAgainst === 'number'
+                         ? t.goalsFor - t.goalsAgainst
+                         : '?');
+
             text += `${icon} *${t.shortName || t.name}*\n`;
             text += `   Pl:${t.played} W:${t.wins} D:${t.draws} L:${t.losses} GD:${gd} | *${t.pts} pts*\n`;
-          }
+          });
         }
 
         m.reply(text);

@@ -171,9 +171,9 @@ module.exports = [
                        : pos === 2 ? '🥈'
                        : '🔹';
             const gd =
-          Number(team.goalConDiff) > 0
-            ? `+${team.goalConDiff}`
-            : team.goalConDiff;
+          Number(t.goalConDiff) > 0
+            ? `+${t.goalConDiff}`
+            : t.goalConDiff;
 
             text += `${icon} *${t.shortName || t.name}*\n`;
             text += `   Pl:${t.played} W:${t.wins} D:${t.draws} L:${t.losses} GD:${gd} | *${t.pts} pts*\n`;

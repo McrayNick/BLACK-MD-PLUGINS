@@ -155,7 +155,11 @@ module.exports = [
 
         if (!groups.length) return m.reply('❌ No group standings found for 2026.');
 
-        const medals = ['🥇', '🥈', '🥉', '🔹'];
+        const medals = ['🥇', '🥈', '🔹', '🔹'];
+        const gd = t.goalDifference ?? t.goalsDiff ?? t.gd ??
+                       (typeof t.goalsFor === 'number' && typeof t.goalsAgainst === 'number'
+                         ? t.goalsFor - t.goalsAgainst
+                         : '?');
 
         let text = `🏆 *FIFA World Cup 2026*\n`;
 
@@ -168,9 +172,9 @@ module.exports = [
           text += `━━━━━━━━━━━━━━━━━\n`;
 
           for (const t of teams) {
-            const icon = medals[t.idx - 2] || '🔹';
+            const icon = medals[t.idx - 1] || '🔹';
             text += `${icon} *${t.shortName || t.name}*\n`;
-            text += `   Pl:${t.played} W:${t.wins} D:${t.draws} L:${t.losses} GD:${t.goalDifference} | *${t.pts} pts*\n`;
+            text += `   Pl:${t.played} W:${t.wins} D:${t.draws} L:${t.losses} GD:${gd} | *${t.pts} pts*\n`;
           }
         }
 

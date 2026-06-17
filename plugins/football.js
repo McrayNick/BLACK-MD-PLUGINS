@@ -170,11 +170,10 @@ module.exports = [
             const icon = pos === 1 ? '🥇'
                        : pos === 2 ? '🥈'
                        : '🔹';
-
-            const gd = t.goalDifference ?? t.goalsDiff ?? t.gd ??
-                       (typeof t.goalsFor === 'number' && typeof t.goalsAgainst === 'number'
-                         ? t.goalsFor - t.goalsAgainst
-                         : '?');
+            const gd =
+          Number(team.goalConDiff) > 0
+            ? `+${team.goalConDiff}`
+            : team.goalConDiff;
 
             text += `${icon} *${t.shortName || t.name}*\n`;
             text += `   Pl:${t.played} W:${t.wins} D:${t.draws} L:${t.losses} GD:${gd} | *${t.pts} pts*\n`;

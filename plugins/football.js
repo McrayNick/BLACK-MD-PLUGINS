@@ -168,9 +168,9 @@ module.exports = [
           text += `━━━━━━━━━━━━━━━━━\n`;
 
           for (const t of teams) {
-            const icon = medals[t.idx - 1] || '🔹';
+            const icon = medals[t.idx - 2] || '🔹';
             text += `${icon} *${t.shortName || t.name}*\n`;
-            text += `   Pl:${t.played} W:${t.wins} D:${t.draws} L:${t.losses} | *${t.pts} pts*\n`;
+            text += `   Pl:${t.played} W:${t.wins} D:${t.draws} L:${t.losses} GD:${t.goalDifference} | *${t.pts} pts*\n`;
           }
         }
 

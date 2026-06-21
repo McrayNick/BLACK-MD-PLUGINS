@@ -607,21 +607,6 @@ await client.sendMessage(m.chat, { image: { url: imageurl}, caption: `𝗖𝗼�
     }
   },
 
-  
-  {
-    command: ['poll'],
-    description: 'Create a group poll',
-    category: 'utility',
-    handler: async (client, m, { reply, text, group }) => {
-      if (!m.isGroup) return reply(group);
-      if (!text) return reply('Format: .poll Question | Option1 | Option2 | ...');
-      const parts = text.split('|').map(p => p.trim());
-      if (parts.length < 3) return reply('Provide at least a question and 2 options.\nE.g: .poll Best fruit? | Apple | Mango | Banana');
-      const [question, ...options] = parts;
-      await client.sendMessage(m.chat, { poll: { name: question, values: options, selectableCount: 1 } }, { quoted: m });
-    }
-  },
-
   {
   command: ['tg'],
   aliases: ['tgs', 'telegrams'],
@@ -786,56 +771,6 @@ await client.sendMessage(m.chat, { image: { url: imageurl}, caption: `𝗖𝗼�
         await reply('An error occurred. Please try again later.');
       }
     }
-  },
-
-  {
-    command: ['vcf'],
-    aliases: ['groupvcf', 'group-vcf'],
-    description: 'Export group contacts as VCF',
-    category: 'utility',
-        handler: async (client, m, { reply, group, store }) => {
-      if (!m.isGroup) return m.reply('Command meant for groups');
-      const fs = require('fs');
-      try {
-        const metadata = await client.groupMetadata(m.chat);
-        const participants = metadata.participants || [];
-        let vcard = '';
-        let no = 0;
-        for (const p of participants) {
-          let num = null;
-          if (p.pn) {
-            num = p.pn.replace(/[^0-9]/g, '');
-          } else if (p.id && !p.id.includes('@lid')) {
-            num = p.id.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-          }
-          if (!num) continue;
-
-          const jidKey  = num + '@s.whatsapp.net';
-          const contact = store?.contacts?.[jidKey] || store?.contacts?.[p.id] || {};
-          const name    = contact.name || contact.notify || `+${num}`;
-
-          vcard +=
-            `BEGIN:VCARD\n` +
-            `VERSION:3.0\n` +
-            `FN:${name}\n` +
-            `TEL;type=CELL;type=VOICE;waid=${num}:+${num}\n` +
-            `END:VCARD\n`;
-          no++;
-        }
-        const filePath = './contacts.vcf';
-        await m.reply(`⏳ Compiling ${participants.length} contacts...`);
-        fs.writeFileSync(filePath, vcard.trim());
-        await client.sendMessage(m.chat, {
-          document: fs.readFileSync(filePath),
-          mimetype: 'text/vcard',
-          fileName: 'Group Contacts.vcf',
-                    caption: `📋 VCF for *${metadata.subject}*\n✅ ${no} contacts exported`
-        }, { quoted: m });
-        fs.unlinkSync(filePath);
-      } catch (err) {
-        m.reply('❌ Failed to generate VCF.');
-      }
-     }
   },
 
 ];

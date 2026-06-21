@@ -653,5 +653,141 @@ module.exports = [
         .catch(() => reply('Link has a problem.'));
     }
   },
+  
+{
+    command: ['poll'],
+    description: 'Create a group poll',
+    category: 'group',
+    handler: async (client, m, { reply, text, group }) => {
+      if (!m.isGroup) return reply(group);
+      if (!text) return reply('Format: .poll Question | Option1 | Option2 | ...');
+      const parts = text.split('|').map(p => p.trim());
+      if (parts.length < 3) return reply('Provide at least a question and 2 options.\nE.g: .poll Best fruit? | Apple | Mango | Banana');
+      const [question, ...options] = parts;
+      await client.sendMessage(m.chat, { poll: { name: question, values: options, selectableCount: 1 } }, { quoted: m });
+    }
+  },
 
+  {
+    command: ['vcf'],
+    aliases: ['groupvcf', 'group-vcf'],
+    description: 'Export group contacts as VCF',
+    category: 'group',
+        handler: async (client, m, { reply, group, store }) => {
+      if (!m.isGroup) return m.reply('Command meant for groups');
+      const fs = require('fs');
+      try {
+        const metadata = await client.groupMetadata(m.chat);
+        const participants = metadata.participants || [];
+        let vcard = '';
+        let no = 0;
+        for (const p of participants) {
+          let num = null;
+          if (p.pn) {
+            num = p.pn.replace(/[^0-9]/g, '');
+          } else if (p.id && !p.id.includes('@lid')) {
+            num = p.id.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+          }
+          if (!num) continue;
+
+          const jidKey  = num + '@s.whatsapp.net';
+          const contact = store?.contacts?.[jidKey] || store?.contacts?.[p.id] || {};
+          const name    = contact.name || contact.notify || `+${num}`;
+
+          vcard +=
+            `BEGIN:VCARD\n` +
+            `VERSION:3.0\n` +
+            `FN:${name}\n` +
+            `TEL;type=CELL;type=VOICE;waid=${num}:+${num}\n` +
+            `END:VCARD\n`;
+          no++;
+        }
+        const filePath = './contacts.vcf';
+        await m.reply(`⏳ Compiling ${participants.length} contacts...`);
+        fs.writeFileSync(filePath, vcard.trim());
+        await client.sendMessage(m.chat, {
+          document: fs.readFileSync(filePath),
+          mimetype: 'text/vcard',
+          fileName: 'Group Contacts.vcf',
+                    caption: `📋 VCF for *${metadata.subject}*\n✅ ${no} contacts exported`
+        }, { quoted: m });
+        fs.unlinkSync(filePath);
+      } catch (err) {
+        m.reply('❌ Failed to generate VCF.');
+      }
+     }
+  },
+
+  {
+    command: ['groupstatus'],
+    aliases: ['togroupstatus', 'statusgroup', 'gcstatus'],
+    noprefix: ['gss', 'gcs'],
+    description: 'Send a message/media to group status',
+    category: 'group',
+    handler: async (client, m, { reply, Owner, NotOwner, group, text }) => {
+      if (!Owner) return m.reply(NotOwner);
+      if (!m.isGroup) return reply(group);
+      if (!text && !m.quoted) {
+        return m.reply(
+          '📌 Usage:\n' +
+          '• togroupstatus <text>\n' +
+          '• Reply to an image/video/audio/document/sticker with togroupstatus <caption>\n' +
+          '• Or just togroupstatus to forward quoted media without caption'
+        );
+      }
+      try {
+        const fs = require('fs');
+        let payload = { groupStatusMessage: {} };
+        if (m.quoted) {
+          const qtype = m.quoted.mtype || '';
+          if (qtype === 'imageMessage') {
+            const caption = text || m.quoted.msg?.caption || '';
+            const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
+            payload.groupStatusMessage.image = { url: filePath };
+            if (caption) payload.groupStatusMessage.caption = caption;
+          } else if (qtype === 'videoMessage') {
+            const caption = text || m.quoted.msg?.caption || '';
+            const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
+            payload.groupStatusMessage.video = { url: filePath };
+            if (caption) payload.groupStatusMessage.caption = caption;
+          } else if (qtype === 'audioMessage') {
+            const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
+            const opusPath = filePath + '_converted.ogg';
+            await new Promise((resolve, reject) => {
+              require('fluent-ffmpeg')(filePath)
+                .audioCodec('libopus')
+                .audioBitrate(128)
+                .toFormat('ogg')
+                .on('end', resolve)
+                .on('error', reject)
+                .save(opusPath);
+            });
+            try { fs.unlinkSync(filePath); } catch (e) {}
+            payload.groupStatusMessage.audio = { url: opusPath };
+            payload._opusCleanup = opusPath;
+          } else if (qtype === 'documentMessage') {
+            const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
+            payload.groupStatusMessage.document = { url: filePath };
+          } else if (qtype === 'stickerMessage') {
+            const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
+            payload.groupStatusMessage.sticker = { url: filePath };
+          } else if (m.quoted.text) {
+            payload.groupStatusMessage.text = m.quoted.text;
+          }
+          if (text && !payload.groupStatusMessage.caption) {
+            payload.groupStatusMessage.caption = text;
+          }
+        } else {
+          payload.groupStatusMessage.text = text;
+        }
+        const opusCleanup = payload._opusCleanup;
+        delete payload._opusCleanup;
+        await client.sendMessage(m.chat, payload, { quoted: m });
+        if (opusCleanup) try { fs.unlinkSync(opusCleanup); } catch (e) {}
+      } catch (err) {
+        m.reply(`❌ Error sending group status: ${err.message}`);
+      }
+    }
+  },
+  
 ];

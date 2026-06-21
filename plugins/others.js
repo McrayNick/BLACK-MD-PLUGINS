@@ -1,39 +1,173 @@
 module.exports = [
-  
-  {
+    {
     command: ['hack'],
     aliases: ['prank'],
-    description: 'Fake hacking animation (Owner only)',
+    description: 'Fake hacking animation',
     category: 'others',
-    handler: async (client, m, { Owner, NotOwner }) => {
-      if (!Owner) return m.reply(NotOwner);
+    handler: async (client, m, { reply, quoted, pushname }) => {
       try {
-        const steps = [
-          '⚠️𝗜𝗻𝗶𝘁𝗶𝗹𝗶𝗮𝘇𝗶𝗻𝗴 𝗛𝗮𝗰𝗸𝗶𝗻𝗴 𝗧𝗼𝗼𝗹𝘀⚠️',
-          '𝗜𝗻𝗷𝗲𝗰𝘁𝗶𝗻𝗴 𝗠𝗮𝗹𝘄𝗮𝗿𝗲🐛..\n𝗟𝗼𝗮𝗱𝗶𝗻𝗴 𝗗𝗲𝘃𝗶𝗰𝗲 𝗚𝗮𝗹𝗹𝗲𝗿𝘆 𝗙𝗶𝗹𝗲𝘀⚠️',
-          '```██ 10%``` ⏳',
-          '```████ 20%``` ⏳',
-          '```██████ 30%``` ⏳',
-          '```████████ 40%``` ⏳',
-          '```██████████ 50%``` ⏳',
-          '```████████████ 60%``` ⏳',
-          '```██████████████ 70%``` ⏳',
-          '```████████████████ 80%``` ⏳',
-          '```██████████████████ 90%``` ⏳',
-          '```████████████████████ 100%``` ✅',
-          '```𝗦𝘆𝘀𝘁𝗲𝗺 𝗛𝘆𝗷𝗮𝗰𝗸𝗶𝗻𝗴 𝗼𝗻 𝗽𝗿𝗼𝗰𝗲𝘀𝘀...```\n```𝗖𝗼𝗻𝗻𝗲𝗰𝘁𝗶𝗻𝗴 𝘁𝗼 𝘁𝗵𝗲 𝗦𝗲𝗿𝘃𝗲𝗿 𝘁𝗼 𝗙𝗶𝗻𝗱 𝗘𝗿𝗿𝗼𝗿 404```',
-          '```𝗦𝘂𝗰𝗰𝗲𝘀𝗳𝘂𝗹𝗹𝘆 𝗖𝗼𝗻𝗻𝗲𝗰𝘁𝗲𝗱 𝘁𝗼 𝗗𝗲𝘃𝗶𝗰𝗲...\n𝗥𝗲𝗰𝗲𝗶𝘃𝗶𝗻𝗴 𝗗𝗮𝘁𝗮/𝗦𝗲𝗰𝗿𝗲𝘁 𝗣𝗮𝘀𝘀𝘄𝗼𝗿𝗱𝘀...```',
-          '```𝗗𝗮𝘁𝗮 𝗧𝗿𝗮𝗻𝘀𝗳𝗲𝗿𝗲𝗱 𝗙𝗿𝗼𝗺 𝗱𝗲𝘃𝗶𝗰𝗲 100% 𝗖𝗼𝗺𝗽𝗹𝗲𝘁𝗲𝗱\n𝗘𝗿𝗮𝘀𝗶𝗻𝗴 𝗮𝗹𝗹 𝗘𝘃𝗶𝗱𝗲𝗻𝗰𝗲, 𝗞𝗶𝗹𝗹𝗶𝗻𝗴 𝗮𝗹𝗹 𝗠𝗮𝗹𝘄𝗮𝗿𝗲𝘀🐛...```',
-          '```𝗦𝗘𝗡𝗗𝗜𝗡𝗚 𝗟𝗢𝗚 𝗗𝗢𝗖𝗨𝗠𝗘𝗡𝗧𝗦...```',
-          '```𝗦𝘂𝗰𝗰𝗲𝘀𝗳𝘂𝗹𝗹𝘆 𝗦𝗲𝗻𝘁 𝗗𝗮𝘁𝗮 𝗔𝗻𝗱 𝗖𝗼𝗻𝗻𝗲𝗰𝘁𝗶𝗼𝗻 𝗦𝘂𝗰𝗰𝗲𝘀𝗳𝘂𝗹𝗹𝘆 𝗗𝗶𝘀𝗰𝗼𝗻𝗻𝗲𝗰𝘁𝗲𝗱```',
-          '```𝗔𝗹𝗹 𝗕𝗮𝗰𝗸𝗹𝗼𝗴𝘀 𝗖𝗹𝗲𝗮𝗿𝗲𝗱 𝗦𝘂𝗰𝗰𝗲𝘀𝘀𝗳𝘂𝗹𝗹𝘆💣\n𝗬𝗼𝘂𝗿 𝗦𝘆𝘀𝘁𝗲𝗺 𝗪𝗶𝗹𝗹 𝗕𝗲 𝗗𝗼𝘄𝗻 𝗜𝗻 𝗧𝗵𝗲 𝗡𝗲𝘅𝘁 𝗠𝗶𝗻𝘂𝘁𝗲⚠️```'
-        ];
-        for (const line of steps) {
-          await client.sendMessage(m.chat, { text: line }, { quoted: m });
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      } catch (error) {
-        client.sendMessage(m.chat, { text: `❌ *Error!* Something went wrong. Reason: ${error.message}.` });
+        // ── helpers ────────────────────────────────────────────────────────
+        const rnd = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+        const ip  = () => `${rnd(1,254)}.${rnd(0,255)}.${rnd(0,255)}.${rnd(1,254)}`;
+        const mac = () => Array.from({length:6}, () => rnd(0,255).toString(16).padStart(2,'0')).join(':');
+        const hex = (len) => Array.from({length:len}, () => rnd(0,255).toString(16).padStart(2,'0')).join('');
+        const port = () => [21,22,23,25,80,443,3306,5432,8080,8443][rnd(0,9)];
+        const pick = arr => arr[rnd(0, arr.length - 1)];
+
+        const target     = m.mentionedJid?.[0]?.replace('@s.whatsapp.net','') || pushname || 'Target';
+        const targetIp   = ip();
+        const attackerIp = ip();
+        const targetMac  = mac();
+        const sessionKey = hex(16);
+        const pass       = pick(['P@$$w0rd!','Tr0ub4dor&3','c0rr3ct-h0rs3','S3cur3#2024','hunter2★','BlackM@trix9']);
+
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+        // ── send initial message then edit it ─────────────────────────────
+        const sent = await client.sendMessage(m.chat, {
+          text: '```[BLACK-MD] Initializing attack sequence...```'
+        }, { quoted: m });
+
+        const edit = async (text) => {
+          await client.sendMessage(m.chat, { text, edit: sent.key });
+          await sleep(1800);
+        };
+
+        // ── Phase 1: Reconnaissance ────────────────────────────────────────
+        await edit(
+`\`\`\`
+[BLACK-MD v3.0] Attack Console
+══════════════════════════════
+[*] Target    : ${target}
+[*] Target IP : ${targetIp}
+[*] Attacker  : ${attackerIp}
+[*] Status    : SCANNING...
+\`\`\``);
+
+        await edit(
+`\`\`\`
+[RECON] Port scanning ${targetIp}...
+> nmap -sV -p- ${targetIp}
+
+PORT     STATE  SERVICE   VERSION
+${port()}/tcp  open   ssh       OpenSSH 8.2
+${port()}/tcp  open   http      Apache 2.4.41
+${port()}/tcp  open   mysql     MySQL 8.0.27
+3306/tcp open   mysql     MySQL 8.0.27
+
+[+] 4 open ports found
+\`\`\``);
+
+        await edit(
+`\`\`\`
+[RECON] Fingerprinting device...
+> arp-scan ${targetIp}
+
+MAC Address : ${targetMac}
+Device OS   : Android 13 (Tiramisu)
+Vendor      : ${pick(['Samsung','Xiaomi','Tecno','Infinix','OnePlus','Motorola'])}
+Signal      : ${rnd(60,99)}%
+[+] Device fingerprint captured
+\`\`\``);
+
+        // ── Phase 2: Exploitation ──────────────────────────────────────────
+        await edit(
+`\`\`\`
+[EXPLOIT] Injecting payload...
+> msf > use exploit/android/browser/webview_rce
+> set RHOST ${targetIp}
+> set LHOST ${attackerIp}
+> run
+
+[*] Started reverse handler on ${attackerIp}:4444
+[*] Sending stage to ${targetIp}...
+[*] Meterpreter session opened ✓
+\`\`\``);
+
+        await edit(
+`\`\`\`
+[SESSION] Establishing tunnel...
+> Encrypting channel... AES-256
+> Session key : ${sessionKey}
+> Ping        : ${rnd(12,89)}ms
+
+[████████████████████] 100%
+[+] Secure tunnel established ✓
+\`\`\``);
+
+        // ── Phase 3: Data extraction ───────────────────────────────────────
+        await edit(
+`\`\`\`
+[EXTRACT] Dumping credentials...
+> hashdump
+
+Username    : ${target.toLowerCase().replace(/\s/g,'')}
+Password    : ${pass}
+Hash (MD5)  : ${hex(16)}
+Last login  : ${new Date().toISOString().slice(0,10)}
+
+[+] Credentials extracted ✓
+\`\`\``);
+
+        await edit(
+`\`\`\`
+[EXTRACT] Accessing file system...
+> ls /sdcard/
+
+📁 DCIM/Camera   [${rnd(200,999)} files, ${rnd(1,9)}.${rnd(1,9)}GB]
+📁 WhatsApp/     [${rnd(50,300)} chats, ${rnd(100,500)} media]
+📁 Downloads/    [${rnd(10,80)} files]
+📄 contacts.vcf  [${rnd(50,500)} contacts]
+📄 passwords.txt ← 👀
+
+[+] File system mapped ✓
+\`\`\``);
+
+        await edit(
+`\`\`\`
+[EXTRACT] Cloning WhatsApp session...
+> wa-clone --target ${targetIp} --session
+
+Copying msgstore.db    ████████ ✓
+Copying wa.db          ████████ ✓  
+Copying media files    ████████ ✓
+Exfiltrating to C2...  ████████ ✓
+
+[+] ${rnd(1000,9999)} messages extracted ✓
+\`\`\``);
+
+        // ── Phase 4: Cover tracks ──────────────────────────────────────────
+        await edit(
+`\`\`\`
+[CLEANUP] Covering tracks...
+> clearlog --all --force
+
+Wiping bash history    ✓
+Flushing ARP cache     ✓
+Removing temp files    ✓
+Closing tunnels        ✓
+Spoofing timestamps    ✓
+
+[+] All traces removed ✓
+\`\`\``);
+
+        // ── Final report ───────────────────────────────────────────────────
+        await client.sendMessage(m.chat, {
+          text: `*[BLACK-MD] HACK COMPLETE* 💀\n\n` +
+                `┌─────────────────────────┐\n` +
+                `│  🎯 Target   : ${target}\n` +
+                `│  🌐 IP       : ${targetIp}\n` +
+                `│  🔑 Password : ${pass}\n` +
+                `│  📱 MAC      : ${targetMac}\n` +
+                `│  💬 Messages : ${rnd(1000,9999)} stolen\n` +
+                `│  📸 Photos   : ${rnd(200,999)} stolen\n` +
+                `│  ⏱️ Duration  : ${rnd(8,30)}s\n` +
+                `└─────────────────────────┘\n\n` +
+                `_This is a prank — no actual hacking occurred_ 😂`
+        }, { quoted: m });
+
+      } catch (err) {
+        reply('❌ Hack failed: ' + err.message);
       }
     }
   },

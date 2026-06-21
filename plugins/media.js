@@ -297,27 +297,6 @@ module.exports = [
   },
 
   {
-    command: ['toimg'],
-    aliases: ['photo', 'toimage'],
-    description: 'Convert a sticker to image',
-    category: 'media',
-    handler: async (client, m, { reply, mime, quoted }) => {
-      const { exec } = require('child_process');
-      if (!quoted) return m.reply('Tag a static video with the command!');
-      if (!/webp/.test(mime)) return m.reply(`Tag a sticker to convert to photo`);
-      const media = await client.downloadAndSaveMediaMessage(quoted);
-      const hikari = `./tmp_${Date.now()}.png`;
-      exec(`ffmpeg -i ${media} ${hikari}`, (err) => {
-        try { fs.unlinkSync(media); } catch {}
-        if (err) return m.reply("❌ Conversion failed.");
-        const buffer = fs.readFileSync(hikari);
-        client.sendMessage(m.chat, { image: buffer, caption: `𝗖𝗼𝗻𝘃𝗲𝗿𝘁𝗲𝗱 𝗯𝘆 𝐁𝐋𝐀𝐂𝐊-𝐌𝐃` }, { quoted: m });
-        try { fs.unlinkSync(hikari); } catch {}
-      });
-    }
-  },
-
-  {
   command: ['smeme'],
   aliases: ['write'],
   description: 'Add words to a sticker',
@@ -528,91 +507,6 @@ module.exports = [
       try { pp = await client.profilePictureUrl(jid, 'image'); }
       catch { return reply('Could not fetch profile picture. The number has hidden their profile picture or not registered on WhatsApp.'); }
       client.sendMessage(m.chat, { image: { url: pp }, caption: `Profile picture of @${jid.split('@')[0]}` }, { quoted: m });
-    }
-  },
-
-  {
-  command: ['tovideo'],
-  aliases: ['mp4', 'tovid'],
-  description: 'Convert animated sticker to video',
-  category: 'media',
-  handler: async (client, m, { reply, prefix, command }) => {
-    if (!m.quoted) return reply(`📎 Reply to an *animated sticker* with *${prefix + command}*`);
-    const mime = (m.quoted.msg || m.quoted).mimetype || '';
-    if (!/webp/.test(mime)) return reply(`⚠️ That's not a sticker.`);
-    try {
-      await m.reply('🎬 _Converting sticker to video..._');
-      const buf = await m.quoted.download();
-      const sharp = require('sharp');
-      const os = require('os');
-      const path = require('path');
-      const { execSync } = require('child_process');
-      const ffmpegPath = require('ffmpeg-static');
-      const id = Date.now();
-      const tmpDir = os.tmpdir();
-      const framesDir = path.join(tmpDir, `frames_${id}`);
-      const outputPath = path.join(tmpDir, `video_${id}.mp4`);
-      fs.mkdirSync(framesDir, { recursive: true });
-      
-      const image = sharp(buf, { animated: true });
-      const metadata = await image.metadata();
-      const pages = metadata.pages || 1;
-      if (pages <= 1) return reply('⚠️ This is a *static* sticker, not animated!');
-      
-      for (let i = 0; i < pages; i++) {
-        const frameBuf = await sharp(buf, { animated: false, page: i })
-          .png()
-          .toBuffer();
-        const framePath = path.join(framesDir, `frame_${String(i).padStart(4, '0')}.png`);
-        fs.writeFileSync(framePath, frameBuf);
-      }
-      
-      try {
-        execSync(
-          `"${ffmpegPath}" -y -framerate 15 -i "${framesDir}/frame_%04d.png" -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -pix_fmt yuv420p -movflags faststart "${outputPath}"`,
-          { timeout: 60000, stdio: 'pipe' }
-        );
-      } catch (e) {
-        return m.reply('❌ ffmpeg error: ' + e.stderr?.toString()?.slice(0, 200));
-      }
-      if (!fs.existsSync(outputPath)) return m.reply('❌ Output file not created');
-      const videoBuffer = fs.readFileSync(outputPath);
-      await client.sendMessage(m.chat, {
-        video: videoBuffer,
-        caption: '*Sticker converted successfully to Video*'
-      }, { quoted: m });
-      
-      try { fs.rmSync(framesDir, { recursive: true }); } catch {}
-      try { fs.unlinkSync(outputPath); } catch {}
-    } catch (err) {
-      m.reply('❌ Error: ' + err.message);
-    }
-  }
-},
-
-  {
-    command: ['toaudio'],
-    aliases: ['audioe'],
-    description: 'Convert video to audio',
-    category: 'media',
-    handler: async (client, m, { reply, quoted, mime }) => {
-      if (!quoted) return reply('Reply to a video message to convert it to audio.');
-      if (!/video/.test(mime)) return reply('Reply to a *video* message.');
-      await reply('🎵 _Converting video to audio..._');
-      const buffer = await client.downloadMediaMessage(quoted);
-      const tmpIn = `tmp_in_${Date.now()}.mp4`;
-      const tmpOut = `tmp_out_${Date.now()}.mp3`;
-      fs.writeFileSync(tmpIn, buffer);
-      const { exec } = require('child_process');
-      exec(`ffmpeg -i ${tmpIn} -vn -acodec libmp3lame ${tmpOut}`, async (err) => {
-        if (err) {
-          m.reply('❌ Conversion failed.');
-        } else {
-          await client.sendMessage(m.chat, { audio: fs.readFileSync(tmpOut), mimetype: 'audio/mpeg', fileName: 'audio.mp3' }, { quoted: m });
-        }
-        try { fs.unlinkSync(tmpIn); } catch {}
-        try { fs.unlinkSync(tmpOut); } catch {}
-      });
     }
   },
   

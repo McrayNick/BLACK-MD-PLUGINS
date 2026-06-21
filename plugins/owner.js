@@ -1,3 +1,5 @@
+'use strict';
+  
 module.exports = [
 
   {
@@ -959,8 +961,8 @@ await client.sendMessage(m.chat, {
 
 
     {
-    command: ['removesudo'],
-    aliases: ['rsudo', 'delsudo'],
+    command: ['delsudo'],
+    aliases: ['rsudo', 'removesudo'],
     description: 'Remove a sudo user (Owner only)',
     category: 'owner',
     handler: async (client, m, { Owner, NotOwner, args, reply, standardizeJid }) => {
@@ -1131,77 +1133,24 @@ await client.sendMessage(m.chat, {
     }
   }
 },
-  
+
   {
-    command: ['groupstatus'],
-    aliases: ['togroupstatus', 'statusgroup', 'gcstatus'],
-    noprefix: ['gss', 'gcs'],
-    description: 'Send a message/media to group status',
+    command: ['logout'],
+    aliases: ['disconnect', 'logoff'],
+    description: 'Log out the bot from WhatsApp',
     category: 'owner',
-    handler: async (client, m, { reply, Owner, NotOwner, group, text }) => {
+    handler: async (client, m, { reply, Owner, NotOwner }) => {
       if (!Owner) return m.reply(NotOwner);
-      if (!m.isGroup) return reply(group);
-      if (!text && !m.quoted) {
-        return m.reply(
-          '📌 Usage:\n' +
-          '• togroupstatus <text>\n' +
-          '• Reply to an image/video/audio/document/sticker with togroupstatus <caption>\n' +
-          '• Or just togroupstatus to forward quoted media without caption'
-        );
-      }
-      try {
-        const fs = require('fs');
-        let payload = { groupStatusMessage: {} };
-        if (m.quoted) {
-          const qtype = m.quoted.mtype || '';
-          if (qtype === 'imageMessage') {
-            const caption = text || m.quoted.msg?.caption || '';
-            const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
-            payload.groupStatusMessage.image = { url: filePath };
-            if (caption) payload.groupStatusMessage.caption = caption;
-          } else if (qtype === 'videoMessage') {
-            const caption = text || m.quoted.msg?.caption || '';
-            const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
-            payload.groupStatusMessage.video = { url: filePath };
-            if (caption) payload.groupStatusMessage.caption = caption;
-          } else if (qtype === 'audioMessage') {
-            const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
-            const opusPath = filePath + '_converted.ogg';
-            await new Promise((resolve, reject) => {
-              require('fluent-ffmpeg')(filePath)
-                .audioCodec('libopus')
-                .audioBitrate(128)
-                .toFormat('ogg')
-                .on('end', resolve)
-                .on('error', reject)
-                .save(opusPath);
-            });
-            try { fs.unlinkSync(filePath); } catch (e) {}
-            payload.groupStatusMessage.audio = { url: opusPath };
-            payload._opusCleanup = opusPath;
-          } else if (qtype === 'documentMessage') {
-            const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
-            payload.groupStatusMessage.document = { url: filePath };
-          } else if (qtype === 'stickerMessage') {
-            const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
-            payload.groupStatusMessage.sticker = { url: filePath };
-          } else if (m.quoted.text) {
-            payload.groupStatusMessage.text = m.quoted.text;
-          }
-          if (text && !payload.groupStatusMessage.caption) {
-            payload.groupStatusMessage.caption = text;
-          }
-        } else {
-          payload.groupStatusMessage.text = text;
-        }
-        const opusCleanup = payload._opusCleanup;
-        delete payload._opusCleanup;
-        await client.sendMessage(m.chat, payload, { quoted: m });
-        if (opusCleanup) try { fs.unlinkSync(opusCleanup); } catch (e) {}
-      } catch (err) {
-        m.reply(`❌ Error sending group status: ${err.message}`);
-      }
+
+      await reply('👋 *Logging out...*\n\nBot is disconnecting from WhatsApp. You need to link again to get another session.');
+
+      setTimeout(async () => {
+        try {
+          await client.logout();
+        } catch (_) {}
+        process.exit();
+      }, 3000);
     }
-  },
+  }, 
 
 ];

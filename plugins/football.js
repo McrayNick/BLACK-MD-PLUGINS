@@ -137,10 +137,10 @@ module.exports = [
     }
   },
 
-      {
+       {
     command: ['fifa'],
     aliases: ['ffa', 'worldcup'],
-    description: 'FIFA 2026 World Cup group standings',
+    description: 'FIFA 2026 World Cup group standings + best thirds',
     category: 'football',
     handler: async (client, m, { api }) => {
       try {
@@ -155,6 +155,7 @@ module.exports = [
 
         if (!groups.length) return m.reply('❌ No group standings found for 2026.');
 
+        const thirds = [];
         let text = `🏆 *FIFA World Cup 2026*\n`;
 
         for (const group of groups) {
@@ -169,14 +170,52 @@ module.exports = [
             const pos = i + 1;
             const icon = pos === 1 ? '🥇'
                        : pos === 2 ? '🥈'
-                       : '🔹';
-            const gd =
-          Number(t.goalConDiff) > 0
-            ? `+${t.goalConDiff}`
-            : t.goalConDiff;
+                       : pos === 3 ? '3️⃣'
+                       : '4️⃣';
+            const gd = Number(t.goalConDiff) > 0 ? `+${t.goalConDiff}` : t.goalConDiff;
 
             text += `${icon} *${t.shortName || t.name}*\n`;
             text += `   Pl:${t.played} W:${t.wins} D:${t.draws} L:${t.losses} GD:${gd} | *${t.pts} pts*\n`;
+
+            if (pos === 3) {
+              thirds.push({
+                group: name.replace('Group', 'Grp'),
+                name: t.shortName || t.name,
+                played: t.played,
+                wins: t.wins,
+                draws: t.draws,
+                losses: t.losses,
+                gd: Number(t.goalConDiff),
+                gf: Number(t.goalConFor ?? t.scored ?? 0),
+                pts: Number(t.pts)
+              });
+            }
+          });
+        }
+
+        // ── Best Thirds ────────────────────
+        if (thirds.length) {
+          thirds.sort((a, b) =>
+            b.pts - a.pts ||
+            b.gd  - a.gd  ||
+            b.gf  - a.gf  ||
+            a.name.localeCompare(b.name)
+          );
+
+          text += `\n\n🔥 *Best Third-Placed Teams*\n`;
+          text += `━━━━━━━━━━━━━━━━━━━━\n`;
+          text += `_(Best 8 of 12 advance to Round of 32)_\n\n`;
+
+          thirds.forEach((t, i) => {
+            const qualifies = i < 8;
+            const icon = i === 0 ? '🥇'
+                       : i === 1 ? '🥈'
+                       : i === 2 ? '🥉'
+                       : qualifies ? '✅' : '❌';
+            const status = qualifies ? '*QUALIFIES ✅*' : 'Eliminated ❌';
+            const gd = t.gd > 0 ? `+${t.gd}` : t.gd;
+            text += `${icon} *${t.name}* (${t.group})\n`;
+            text += `   Pl:${t.played} W:${t.wins} D:${t.draws} L:${t.losses} GD:${gd} | *${t.pts} pts* — ${status}\n\n`;
           });
         }
 
@@ -185,7 +224,7 @@ module.exports = [
         m.reply('❌ Error fetching FIFA standings.');
       }
     }
-  },
+  }, 
 
   {
     command: ['euro'],

@@ -226,6 +226,97 @@ module.exports = [
     }
   }, 
 
+    {
+    command: ['fifaplayoffs'],
+    aliases: ['playoffs', 'wcbracket', 'wcko'],
+    description: 'FIFA World Cup knockout bracket',
+    category: 'football',
+    handler: async (client, m, { api }) => {
+      try {
+        await client.sendMessage(m.chat, { react: { text: '🏆', key: m.key } });
+        const res = await axios.get(`${api}/fifastandings`);
+        const data = res.data;
+
+        if (!data?.status) return m.reply('❌ FIFA data unavailable.');
+
+        const playoff = data.result?.playoff;
+        if (!playoff?.rounds?.length) return m.reply('❌ Knockout bracket not available yet. Check back once the group stage ends.');
+
+        const season = data.result.details?.selectedSeason || '2026';
+
+        const stageLabels = {
+          '1/16':  '🔵 ROUND OF 32',
+          '1/8':   '🟢 ROUND OF 16',
+          '1/4':   '🟡 QUARTER-FINALS',
+          '1/2':   '🟠 SEMI-FINALS',
+          'final': '🏆 FINAL'
+        };
+
+        let txt = `🏆 *FIFA WORLD CUP ${season}*\n`;
+        txt += `🎯 *KNOCKOUT BRACKET*\n`;
+
+        for (const round of playoff.rounds) {
+          const label = stageLabels[round.stage] || `🔘 ${round.stage.toUpperCase()}`;
+          txt += `\n━━━━━━━━━━━━━━━━━\n`;
+          txt += `*${label}*\n`;
+          txt += `━━━━━━━━━━━━━━━━━\n`;
+
+          for (const matchup of round.matchups) {
+            const match = matchup.matches?.[0];
+            const home = matchup.homeTeam || 'TBD';
+            const away = matchup.awayTeam || 'TBD';
+
+            if (!match || !match.status?.started) {
+              const date = match?.status?.utcTime
+                ? new Date(match.status.utcTime).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+                : 'TBD';
+              txt += `⚽ ${home} 🆚 ${away}  _(${date})_\n`;
+            } else if (match.status?.finished) {
+              const hScore = match.home?.score ?? 0;
+              const aScore = match.away?.score ?? 0;
+              const winner = matchup.aggregatedWinner;
+              txt += `✅ *${home} ${hScore} - ${aScore} ${away}*`;
+              if (winner) txt += `  → *${winner}* advances`;
+              txt += `\n`;
+            } else {
+              const hScore = match.home?.score ?? 0;
+              const aScore = match.away?.score ?? 0;
+              txt += `🔴 *LIVE* ${home} ${hScore} - ${aScore} ${away}\n`;
+            }
+          }
+        }
+
+        // Bronze Final
+        const bronze = playoff.bronzeFinal;
+        if (bronze?.matchups?.length) {
+          txt += `\n━━━━━━━━━━━━━━━━━\n`;
+          txt += `*🥉 THIRD PLACE*\n`;
+          txt += `━━━━━━━━━━━━━━━━━\n`;
+          const bMatch = bronze.matchups[0];
+          const bHome = bMatch.homeTeam || 'TBD';
+          const bAway = bMatch.awayTeam || 'TBD';
+          const bm = bMatch.matches?.[0];
+          if (bm?.status?.finished) {
+            txt += `✅ *${bHome} ${bm.home?.score} - ${bm.away?.score} ${bAway}*\n`;
+          } else if (bm?.status?.started) {
+            txt += `🔴 *LIVE* ${bHome} ${bm.home?.score} - ${bm.away?.score} ${bAway}\n`;
+          } else {
+            const date = bm?.status?.utcTime
+              ? new Date(bm.status.utcTime).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+              : 'TBD';
+            txt += `⚽ ${bHome} 🆚 ${bAway}  _(${date})_\n`;
+          }
+        }
+
+        await client.sendMessage(m.chat, { text: txt }, { quoted: m });
+
+      } catch (e) {
+        console.error('FIFA Playoff Error:', e);
+        m.reply('❌ Error fetching FIFA bracket.');
+      }
+    }
+  },
+
   {
     command: ['euro'],
     aliases: ['eu'],

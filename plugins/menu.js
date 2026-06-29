@@ -104,7 +104,7 @@ for (const p of plugins) {
       if (menutype === 'video') {
 
                    client.sendMessage(m.chat, {
-                        video: fs.readFileSync('./Media/blacky.mp4'),
+                        video: { url: 'https://files.catbox.moe/yi3wkc.mp4' },
                         caption: menu,
                         gifPlayback: true
                     }, {
@@ -123,7 +123,7 @@ client.sendMessage(m.chat, {
                                 showAdAttribution: true,
                                 title: `𝐁𝐋𝐀𝐂𝐊-𝐌𝐃`,
                                 body: `${runtime(process.uptime())}`,
-                                thumbnail: fs.readFileSync('./Media/blackmachant.jpg'),
+                                thumbnailUrl: 'https://files.catbox.moe/hzlqe0.jpg',
                                 sourceUrl: 'https://wa.me/254114283550?text=Hello👋+blackmerchant+Nihostie+Bot+Mkuu+😔',
                                 mediaType: 1,
                                 renderLargerThumbnail: true

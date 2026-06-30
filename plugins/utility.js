@@ -452,7 +452,7 @@ module.exports = [
 
   {
     command: ['gitclone'],
-    aliases: ['clone', 'zip'],
+    aliases: ['clone'],
     description: 'Download a GitHub repo as ZIP',
     category: 'utility',
     handler: async (client, m, { reply, text }) => {
@@ -467,7 +467,38 @@ module.exports = [
       await client.sendMessage(m.chat, { document: { url }, fileName: filename + '.zip', mimetype: 'application/zip' }, { quoted: m }).catch(() => m.reply('error'));
     }
   },
+      
+{
+  command: ['zip'],
+  aliases: ['botzip', 'sourcecode', 'getzip'],
+  description: 'Send the main bot repo as a ZIP file',
+  category: 'utility',
+  handler: async (client, m, { reply }) => {
 
+    const REPO  = 'Blackie254/black-super-bot';
+    const url   = `https://github.com/${REPO}/archive/refs/heads/main.zip`;
+
+    await reply('⏳ Fetching bot source code ZIP...');
+
+    try {
+      await client.sendMessage(m.chat, {
+        document:  { url },
+        mimetype:  'application/zip',
+        fileName:  'black-super-bot.zip',
+        caption:
+          `╔══════════════════════╗\n` +
+          `║   📦  BOT SOURCE CODE  \n` +
+          `╚══════════════════════╝\n\n` +
+          `📁 *Repo:* ${REPO}\n` +
+          `🌿 *Branch:* main\n` +
+          `🔗 *GitHub:* https://github.com/${REPO}`
+      }, { quoted: m });
+    } catch (err) {
+      await reply(`❌ Failed to fetch ZIP: ${err.message}`);
+    }
+  }
+},
+  
   {
     command: ['screenshot'],
     aliases: ['ss', 'ssweb'],

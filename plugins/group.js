@@ -126,7 +126,7 @@ module.exports = [
     handler: async (client, m, { Owner, NotOwner, participants }) => {
       if (!Owner) return m.reply(NotOwner);
       if (!m.isGroup) return m.reply('This command is meant for groups');
-      await client.sendMessage(m.chat, { text: '𝗚𝗼𝗼𝗱𝗯𝘆𝗲 𝗲𝘃𝗲𝗿𝘆𝗼𝗻𝗲👋. 𝐁𝐋𝐀𝐂𝐊𝐌𝐀𝐂𝐇𝐀𝐍𝐓 𝐁𝐎𝐓-𝗔𝗶 𝗶𝘀 𝗟𝗲𝗮𝘃𝗶𝗻𝗴 𝘁𝗵𝗲 𝗚𝗿𝗼𝘂𝗽 𝗻𝗼𝘄...', mentions: participants.map(a => a.id) }, { quoted: m });
+      await client.sendMessage(m.chat, { text: '𝗚𝗼𝗼𝗱𝗯𝘆𝗲 𝗲𝘃𝗲𝗿𝘆𝗼𝗻𝗲👋. BLACK-MD 𝗶𝘀 𝗟𝗲𝗮𝘃𝗶𝗻𝗴 𝘁𝗵𝗲 𝗚𝗿𝗼𝘂𝗽 𝗻𝗼𝘄...', mentions: participants.map(a => a.id) }, { quoted: m });
       await client.groupLeave(m.chat);
     }
   },
@@ -345,8 +345,8 @@ module.exports = [
       const { jidNormalizedUser } = require('@whiskeysockets/baileys');
       if (users === jidNormalizedUser(client.user.id)) return reply('I cannot remove Myself 😡');
       await client.sendMessage(m.chat, {
-        text: `@${users}, Goodbye idiot🤧`,
-        mentions: [parts]
+        text: `@${parts}, Goodbye idiot🤧`,
+        mentions: [users]
       }, { quoted: m });
       await client.groupParticipantsUpdate(m.chat, [users], 'remove');
     }

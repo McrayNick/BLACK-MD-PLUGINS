@@ -437,7 +437,7 @@ module.exports = [
   // ── .url — Upload quoted image/video to ImBB, reply with link ──────────
   {
     command: ['url'],
-    aliases: ['upload'],
+    aliases: ['uploads'],
     description: 'Upload a quoted image and get a direct link',
     category: 'ai',
     handler: async (client, m) => {
@@ -456,5 +456,28 @@ module.exports = [
       }
     }
   },
+
+  {
+  command: ['upload'],
+  description: 'Upload a quoted image, video, or audio and get a link',
+  category: 'utility',
+  handler: async (client, m, { reply }) => {
+    const { uploadMedia } = require('../lib/uploads');
+    let q = m.quoted ? m.quoted : m;
+    let mime = (q.msg || q).mimetype || '';
+    if (!mime) return reply('Quote an image, video, or audio message.');
+    let isSupported = /^(image|video|audio)\//.test(mime);
+    if (!isSupported) return reply('Only image, video, and audio files are supported.');
+    let mediaBuffer = await q.download();
+    if (mediaBuffer.length > 190 * 1024 * 1024) return reply('Media is too large (max ~190MB).');
+    try {
+      let filePath = await client.downloadAndSaveMediaMessage(q);
+      let link = await uploadMedia(filePath);
+      reply(`Media Link:-\n\n${link}`);
+    } catch (err) {
+      reply(`Upload failed: ${err.message}`);
+    }
+  }
+},
 
 ];

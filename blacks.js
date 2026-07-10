@@ -230,7 +230,7 @@ const Owner = finalSuperUsers.includes(standardizeJid(senderForOwner)) || isSudo
     const date = new Date()
     const Rspeed = speed() - timestamp;
 
-    let argsLog = budy.length > 30 ? `${q.substring(0, 30)}...` : budy;
+    let argsLog = budy;
 
     // ── Online status ──────────────────────────────────────────────────────────
     const Grace = mek.key.remoteJid;
@@ -311,13 +311,39 @@ const Owner = finalSuperUsers.includes(standardizeJid(senderForOwner)) || isSudo
       client.sendMessage(m.chat, { text: `𝗛𝗲𝘆 @${ki.split('@')[0]}👋\n\n𝗦𝗲𝗻𝗱𝗶𝗻𝗴 𝗟𝗶𝗻𝗸𝘀 𝗶𝘀 𝗣𝗿𝗼𝗵𝗶𝗯𝗶𝘁𝗲𝗱!`, contextInfo: { mentionedJid: [ki] } }, { quoted: m });
     }
 
-    // ── Console log ──────────────────────────────────────────────────────────
-    if (cmd && !m.isGroup) {
-      console.log(chalk.black(chalk.bgWhite('[ 𝐁𝐋𝐀𝐂𝐊-𝐌𝐃 ]')), color(argsLog, 'turquoise'), chalk.magenta('From'), chalk.green(pushname), chalk.yellow(`[ ${m.sender.replace('@s.whatsapp.net', '')} ]`));
-    } else if (cmd && m.isGroup) {
-      console.log(chalk.black(chalk.bgWhite('[ LOGS ]')), color(argsLog, 'turquoise'), chalk.magenta('From'), chalk.green(pushname), chalk.yellow(`[ ${m.sender.replace('@s.whatsapp.net', '')} ]`), chalk.blueBright('IN'), chalk.green(groupName));
-    }
+// ── Console log ──────────────────────────────────────────────────────────
+const MEDIA_LABELS = {
+  imageMessage: '🖼️ [Image]',
+  videoMessage: '🎥 [Video]',
+  audioMessage: '🎵 [Audio]',
+  stickerMessage: '🌟 [Sticker]',
+  documentMessage: '📄 [Document]',
+  contactMessage: '👤 [Contact]',
+  locationMessage: '📍 [Location]',
+  pollCreationMessage: '📊 [Poll]',
+};
+const mediaLabel = MEDIA_LABELS[m.mtype] || '';
+const captionText = budy && budy.trim() ? budy : '';
+const logText = mediaLabel
+  ? (captionText ? `${mediaLabel} ${captionText}` : mediaLabel)
+  : captionText;
 
+if (logText && m.chat !== 'status@broadcast') {
+  const pad = (str, len) => String(str).length >= len ? String(str).slice(0, len) : String(str).padEnd(len, ' ');
+  const tag = cmd ? chalk.bgGreen.black(' CMD ') : chalk.bgBlue.black(' MSG ');
+  const scope = m.isGroup ? chalk.bgMagenta.black(' GROUP ') : chalk.bgCyan.black('  DM   ');
+  const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+
+  console.log(
+    chalk.gray(`[${time}]`),
+    tag,
+    scope,
+    chalk.green(pad(pushname, 16)),
+    chalk.yellow(`[${sender.replace('@s.whatsapp.net', '')}]`),
+    m.isGroup ? chalk.blueBright(`(${groupName || 'unknown group'})`) : '',
+    color(logText, 'turquoise'),
+  );
+}
     // ── COMMAND DISPATCH ─────────────────────────────────────────────────────
     if (cmd) {
     

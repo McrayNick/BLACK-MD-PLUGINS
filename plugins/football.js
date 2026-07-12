@@ -273,10 +273,17 @@ module.exports = [
               txt += `⚽ ${home} 🆚 ${away}  _(${date})_\n`;
             } else if (match.status?.finished) {
               const hScore = match.home?.score ?? 0;
-              const aScore = match.away?.score ?? 0;
-              const winner = matchup.aggregatedWinner;
-              txt += `✅ *${home} ${hScore} - ${aScore} ${away}*`;
-              if (winner) txt += `  → *${winner}* advances`;
+const aScore = match.away?.score ?? 0;
+const winner = matchup.aggregatedWinner;
+let winnerName = null;
+if (winner) {
+  if (match.home?.id == winner) winnerName = home;
+  else if (match.away?.id == winner) winnerName = away;
+  else if (hScore > aScore) winnerName = home;
+  else if (aScore > hScore) winnerName = away;
+}
+txt += `✅ *${home} ${hScore} - ${aScore} ${away}*`;
+if (winnerName) txt += `  → *${winnerName}* advances`;
               txt += `\n`;
             } else {
               const hScore = match.home?.score ?? 0;

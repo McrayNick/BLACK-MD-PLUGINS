@@ -460,7 +460,7 @@ module.exports = [
   {
   command: ['upload'],
   description: 'Upload a quoted image, video, or audio and get a link',
-  category: 'utility',
+  category: 'ai',
   handler: async (client, m, { reply }) => {
     const { uploadMedia } = require('../lib/uploads');
     let q = m.quoted ? m.quoted : m;

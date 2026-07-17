@@ -163,8 +163,8 @@ module.exports = [
           return client.sendMessage(m.chat, { text: '❌ Download failed. Try a different video.', edit: msg.key });
         }
 
-        const finalTitle = data.data.title || videoTitle;
-        const downloadUrl = data.data.url;
+        const finalTitle = data.title || videoTitle;
+        const downloadUrl = data.downloadUrl;
         const fileName = finalTitle.replace(/[\/\\:*?"<>|]/g, '').trim() + '.mp4';
 
         await client.sendMessage(m.chat, { text: `✅ Downloading: *${finalTitle}*`, edit: msg.key });

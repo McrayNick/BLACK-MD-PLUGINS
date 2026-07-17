@@ -155,7 +155,7 @@ module.exports = [
         await client.sendMessage(m.chat, { text: `😍 Found: *${videoTitle}*\n⏳ Downloading...`, edit: msg.key });
 
         const apiRes = await axios.get(
-          `https://iamtkm.vercel.app/downloaders/ytmp4?apikey=tkm&url=${encodeURIComponent(videoUrl)}`,
+          `https://apissupreme.vercel.app/media/ytmp4?apikey=supreme&url=${encodeURIComponent(videoUrl)}`,
           { timeout: 60000 }
         );
         const data = apiRes.data;

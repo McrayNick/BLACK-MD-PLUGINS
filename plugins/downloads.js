@@ -159,7 +159,7 @@ module.exports = [
           { timeout: 60000 }
         );
         const data = apiRes.data;
-        if (!data.status || !data.data?.url) {
+        if (!data.status) {
           return client.sendMessage(m.chat, { text: '❌ Download failed. Try a different video.', edit: msg.key });
         }
 

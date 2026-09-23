@@ -12,176 +12,238 @@ module.exports = [
   command: ['sticker'],
   aliases: ['stik', 's', 'stikpack'],
   description: 'Create sticker from quoted image or video',
-  category: 'media',
+  category: 'Sticker',
 
-  handler: async (client, m, { reply, msgR }) => {
+  handler: async (
+    client,
+    m,
+    {
+      msgR: quotedMsg,
+      pushname: pushName,
+      author,
+      reply
+    }
+  ) => {
     const fs = require('fs');
     const os = require('os');
     const path = require('path');
-    const { execFileSync } = require('child_process');
+    const { execSync } = require('child_process');
+    const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+    const sharp = require('sharp');
+    const {
+      Sticker,
+      StickerTypes
+    } = require('wa-sticker-formatter');
 
-    let ffmpegPath;
-    try {
-      ffmpegPath = require('ffmpeg-static') || 'ffmpeg';
-    } catch {
-      ffmpegPath = 'ffmpeg';
-    }
+    const ffmpegPath = require('ffmpeg-static');
+    const from = m.chat;
+    const mek = m;
 
-    if (!msgR) {
+    if (!quotedMsg) {
       return reply('Quote an image or a short video.');
     }
 
     let media;
     let isVideo = false;
 
-    if (msgR.imageMessage) {
-      media = msgR.imageMessage;
-    } else if (msgR.videoMessage) {
-      media = msgR.videoMessage;
+    if (quotedMsg.imageMessage) {
+      media = quotedMsg.imageMessage;
+    } else if (quotedMsg.videoMessage) {
+      media = quotedMsg.videoMessage;
       isVideo = true;
     } else {
       return reply('That is neither an image nor a short video.');
     }
 
     if (isVideo) {
-      const sizeMB = Number(media.fileLength || 0) / (1024 * 1024);
-      const seconds = Number(media.seconds || 0);
+      const sizeMB =
+        (media.fileLength || 0) / (1024 * 1024);
+
+      const seconds = media.seconds || 0;
 
       if (sizeMB > 8) {
-        return reply(`Video too large (${sizeMB.toFixed(1)} MB). Max is 8 MB.`);
+        return reply(
+          `Video too large (${sizeMB.toFixed(1)} MB). Max is 8 MB.`
+        );
       }
 
       if (seconds > 10) {
-        return reply(`Video too long (${seconds}s). Max is 10 seconds.`);
+        return reply(
+          `Video too long (${seconds}s). Max is 10 seconds.`
+        );
       }
     }
 
-    let inputPath;
-
     try {
-      inputPath = await client.downloadAndSaveMediaMessage(media);
-      const inputBuffer = fs.readFileSync(inputPath);
+      const mediaType = isVideo
+        ? 'videoMessage'
+        : 'imageMessage';
 
-      const convertToSticker = (buffer, video, fps = 10, quality = 40) => {
-        const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-        const tempDir = os.tmpdir();
-        const sourcePath = path.join(tempDir, `black_sticker_${id}.input`);
-        const outputPath = path.join(tempDir, `black_sticker_${id}.webp`);
-
-        fs.writeFileSync(sourcePath, buffer);
-
-        try {
-          const filter = video
-            ? 'scale=512:512:force_original_aspect_ratio=increase,fps=' +
-              `${fps},crop=min(iw\\,ih):min(iw\\,ih),scale=512:512`
-            : 'scale=512:512:force_original_aspect_ratio=decrease,' +
-              'pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000';
-
-          const args = [
-            '-y',
-            '-i',
-            sourcePath
-          ];
-
-          if (video) {
-            args.push(
-              '-t',
-              '6',
-              '-vf',
-              filter,
-              '-an',
-              '-c:v',
-              'libwebp',
-              '-loop',
-              '0',
-              '-q:v',
-              String(quality),
-              '-compression_level',
-              '4',
-              outputPath
-            );
-          } else {
-            args.push(
-              '-frames:v',
-              '1',
-              '-vf',
-              filter,
-              '-an',
-              '-c:v',
-              'libwebp',
-              '-q:v',
-              String(quality),
-              '-compression_level',
-              '6',
-              outputPath
-            );
+      const buffer = await downloadMediaMessage(
+        {
+          message: {
+            [mediaType]: media
           }
-
-          execFileSync(ffmpegPath, args, {
-            timeout: 30000,
-            stdio: 'pipe'
-          });
-
-          return fs.readFileSync(outputPath);
-        } finally {
-          try {
-            fs.unlinkSync(sourcePath);
-          } catch {}
-
-          try {
-            fs.unlinkSync(outputPath);
-          } catch {}
+        },
+        'buffer',
+        {},
+        {
+          reuploadRequest: client.updateMediaMessage,
+          logger: console
         }
-      };
+      );
 
       let stickerBuffer;
 
       if (isVideo) {
-        try {
-          stickerBuffer = convertToSticker(inputBuffer, true, 10, 40);
+        const makeVideoSticker = async (
+          inputBuffer,
+          fps,
+          quality
+        ) => {
+          const id = Date.now();
+          const tmpDir = os.tmpdir();
 
-          if (!stickerBuffer || stickerBuffer.length < 500) {
-            throw new Error('Output sticker is empty.');
+          const inputPath = path.join(
+            tmpDir,
+            `stk_video_${id}.mp4`
+          );
+
+          const processedPath = path.join(
+            tmpDir,
+            `stk_${id}_${fps}fps.mp4`
+          );
+
+          fs.writeFileSync(inputPath, inputBuffer);
+
+          try {
+            execSync(
+              `"${ffmpegPath}" -y -i "${inputPath}" -t 6 ` +
+                `-vf "scale=512:512:force_original_aspect_ratio=increase,fps=${fps},` +
+                `crop=min(iw\\,ih):min(iw\\,ih),scale=512:512" ` +
+                `-an -c:v libx264 -crf 28 -preset ultrafast "${processedPath}"`,
+              {
+                timeout: 30000,
+                stdio: 'pipe'
+              }
+            );
+          } catch {
+            fs.copyFileSync(inputPath, processedPath);
+          }
+
+          const sticker = new Sticker(
+            fs.readFileSync(processedPath),
+            {
+              pack: pushName || 'Sticker',
+              author: author || 'Bot',
+              type: StickerTypes.FULL,
+              quality
+            }
+          );
+
+          const result = await sticker.toBuffer();
+
+          try {
+            fs.unlinkSync(inputPath);
+          } catch {}
+
+          try {
+            fs.unlinkSync(processedPath);
+          } catch {}
+
+          return result;
+        };
+
+        try {
+          stickerBuffer = await makeVideoSticker(
+            buffer,
+            10,
+            40
+          );
+
+          if (
+            !stickerBuffer ||
+            stickerBuffer.length < 500
+          ) {
+            throw new Error('Output buffer empty');
           }
 
           if (stickerBuffer.length > 950 * 1024) {
-            stickerBuffer = convertToSticker(inputBuffer, true, 5, 25);
+            const retryBuffer = await makeVideoSticker(
+              buffer,
+              5,
+              25
+            );
+
+            if (
+              retryBuffer &&
+              retryBuffer.length >= 500
+            ) {
+              stickerBuffer = retryBuffer;
+            }
           }
 
           if (stickerBuffer.length > 1024 * 1024) {
             return reply(
-              'Sticker too large. Try a shorter video or lower-quality clip.'
+              'Sticker too large. Try a shorter clip.'
             );
           }
-        } catch (error) {
-          return reply(`Video sticker failed.\n${error.message}`);
+        } catch (videoErr) {
+          return reply(
+            `Video sticker failed.\n${videoErr.message}`
+          );
         }
       } else {
-        stickerBuffer = convertToSticker(inputBuffer, false, 1, 80);
+        const metadata = await sharp(buffer).metadata();
+        const { width, height } = metadata;
 
-        if (!stickerBuffer || stickerBuffer.length < 500) {
-          return reply('Failed to create the sticker.');
+        let resizeOptions;
+
+        if (width === height) {
+          resizeOptions = {
+            width: 512,
+            height: 512,
+            fit: 'cover'
+          };
+        } else {
+          resizeOptions = {
+            width: 512,
+            height: 512,
+            fit: 'contain',
+            background: {
+              r: 0,
+              g: 0,
+              b: 0,
+              alpha: 0
+            }
+          };
         }
 
-        if (stickerBuffer.length > 1024 * 1024) {
-          return reply('Sticker is too large. Try a smaller image.');
-        }
+        const webpBuffer = await sharp(buffer)
+          .resize(512, 512, resizeOptions)
+          .webp({ quality: 85 })
+          .toBuffer();
+
+        const sticker = new Sticker(webpBuffer, {
+          pack: pushName || 'Sticker',
+          author: author || 'Bot',
+          type: StickerTypes.FULL,
+          categories: ['🤩', '🎉'],
+          quality: 85,
+          background: 'transparent'
+        });
+
+        stickerBuffer = await sticker.toBuffer();
       }
 
       await client.sendMessage(
-        m.chat,
+        from,
         { sticker: stickerBuffer },
-        { quoted: m }
+        { quoted: mek }
       );
-    } catch (error) {
-      console.error('Sticker command error:', error);
-      await reply(`Failed: ${error.message}`);
-    } finally {
-      if (inputPath) {
-        try {
-          fs.unlinkSync(inputPath);
-        } catch {}
-      }
+    } catch (err) {
+      console.error('sticker error:', err);
+      await reply(`Failed: ${err.message}`);
     }
   }
 },

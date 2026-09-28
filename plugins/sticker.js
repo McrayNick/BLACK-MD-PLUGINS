@@ -2,20 +2,28 @@
 
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const os = require('os');
-const { exec, execSync } = require('child_process');
-const webp = require('node-webpmux');
+const crypto = require('crypto');
+const { execSync, execFile } = require('child_process');
+const { promisify } = require('util');
+
+const sharp = require('sharp');
+const {
+  Sticker,
+  StickerTypes
+} = require('wa-sticker-formatter');
 
 const {
-  packname: configuredPackname,
-  author: configuredAuthor
+  packname,
+  author
 } = require('../set.js');
+
+const execFileAsync = promisify(execFile);
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
 /*
- * FFmpeg path resolver
+ * Locate FFmpeg.
  */
 const FFMPEG_CANDIDATES = [
   (() => {
@@ -75,7 +83,22 @@ function resolveFfmpegPath() {
 }
 
 /*
- * Delete temporary files safely
+ * Configure wa-sticker-formatter to use the same FFmpeg binary.
+ */
+function configureStickerFfmpeg(binary) {
+  try {
+    const fluentFfmpeg = require('fluent-ffmpeg');
+    fluentFfmpeg.setFfmpegPath(binary);
+  } catch (error) {
+    console.warn(
+      'Could not configure fluent-ffmpeg:',
+      error.message
+    );
+  }
+}
+
+/*
+ * Safely remove temporary files.
  */
 function deleteTempFile(file) {
   try {
@@ -84,15 +107,14 @@ function deleteTempFile(file) {
     }
   } catch (error) {
     console.error(
-      'Could not delete temporary file:',
-      file,
+      'Temporary file cleanup failed:',
       error.message
     );
   }
 }
 
 /*
- * Unwrap WhatsApp message wrappers
+ * Unwrap WhatsApp message wrappers.
  */
 function unwrapMessage(message) {
   let current = message;
@@ -125,7 +147,7 @@ function unwrapMessage(message) {
 }
 
 /*
- * Find media inside a WhatsApp message
+ * Detect media from a raw WhatsApp message.
  */
 function findMedia(message) {
   const unwrapped = unwrapMessage(message);
@@ -150,8 +172,129 @@ function findMedia(message) {
 }
 
 /*
- * Sticker plugin
+ * Parse .sticker packname|author
  */
+function getStickerMetadata(args) {
+  const input = Array.isArray(args)
+    ? args.join(' ').trim()
+    : '';
+
+  const [packArg, authorArg] = input
+    ? input
+        .split('|')
+        .map(value => value.trim())
+    : [];
+
+  return {
+    pack:
+      packArg ||
+      configuredPackname ||
+      'supreme',
+
+    author:
+      authorArg ||
+      configuredAuthor ||
+      'BLACK-MD'
+  };
+}
+
+/*
+ * Process a video with FFmpeg.
+
+ * Important:
+ * This does NOT use libwebp because the server FFmpeg
+ * build does not contain that encoder.
+ */
+async function prepareVideo(
+  inputBuffer,
+  outputPath,
+  ffmpegBinary,
+  isLargeFile
+) {
+  const inputPath = path.join(
+    os.tmpdir(),
+    `black_sticker_input_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2)}.input`
+  );
+
+  fs.writeFileSync(
+    inputPath,
+    inputBuffer
+  );
+
+  const duration = isLargeFile ? '2' : '3';
+  const fps = isLargeFile ? '8' : '12';
+  const crf = isLargeFile ? '32' : '28';
+
+  const ffmpegArgs = [
+    '-y',
+    '-i',
+    inputPath,
+    '-t',
+    duration,
+    '-vf',
+    `crop=min(iw\\,ih):min(iw\\,ih),scale=512:512,fps=${fps}`,
+    '-an',
+    '-c:v',
+    'libx264',
+    '-preset',
+    'ultrafast',
+    '-crf',
+    crf,
+    '-pix_fmt',
+    'yuv420p',
+    '-movflags',
+    '+faststart',
+    outputPath
+  ];
+
+  try {
+    const result = await execFileAsync(
+      ffmpegBinary,
+      ffmpegArgs,
+      {
+        maxBuffer: 20 * 1024 * 1024
+      }
+    );
+
+    if (result.stderr) {
+      console.log(
+        'FFmpeg video processing:',
+        result.stderr
+      );
+    }
+
+    if (!fs.existsSync(outputPath)) {
+      throw new Error(
+        'FFmpeg did not create the processed video'
+      );
+    }
+
+    const stats =
+      fs.statSync(outputPath);
+
+    if (stats.size === 0) {
+      throw new Error(
+        'FFmpeg created an empty processed video'
+      );
+    }
+
+    return fs.readFileSync(outputPath);
+  } catch (error) {
+    const details =
+      error.stderr ||
+      error.message ||
+      String(error);
+
+    throw new Error(
+      `Video preprocessing failed:\n${details}`
+    );
+  } finally {
+    deleteTempFile(inputPath);
+  }
+}
+
 module.exports = [
   {
     command: ['sticker'],
@@ -171,37 +314,17 @@ module.exports = [
         msgR
       }
     ) => {
-      const uniqueId =
-        `${Date.now()}_${Math.random()
-          .toString(36)
-          .slice(2)}`;
-
-      const tempInput = path.join(
-        os.tmpdir(),
-        `black_sticker_${uniqueId}.input`
-      );
-
-      const tempOutput = path.join(
-        os.tmpdir(),
-        `black_sticker_${uniqueId}.webp`
-      );
-
-      const tempFiles = [
-        tempInput,
-        tempOutput
-      ];
+      const tempFiles = [];
 
       try {
         /*
-         * First check the quoted message.
-         * msgR is the raw quoted WhatsApp message
-         * provided by BLACK-MD.
+         * First check the message being replied to.
          */
         let mediaInfo = findMedia(msgR);
 
         /*
-         * Also support sending an image/video directly
-         * with .sticker as its caption.
+         * Also support:
+         * .s sent as a caption on an image/video.
          */
         if (!mediaInfo) {
           mediaInfo = findMedia(m.message);
@@ -220,13 +343,12 @@ module.exports = [
 
         if (!media) {
           return reply(
-            '🖼️ The quoted message does not contain usable media.'
+            '❌ The quoted message does not contain usable media.'
           );
         }
 
         /*
-         * Your bot already has its own media downloader.
-         * It expects the media object itself to contain mtype.
+         * Use BLACK-MD's existing media downloader.
          */
         const downloadableMedia = {
           ...media,
@@ -254,22 +376,19 @@ module.exports = [
           );
         }
 
-        fs.writeFileSync(
-          tempInput,
-          mediaBuffer
-        );
+        const metadata =
+          getStickerMetadata(args);
 
-        const isAnimated =
+        const mimetype =
+          String(media.mimetype || '')
+            .toLowerCase();
+
+        const isVideo =
           mediaType === 'videoMessage' ||
-          media.mimetype?.includes('video') ||
-          media.mimetype?.includes('gif') ||
-          Number(media.seconds || 0) > 0;
+          mimetype.startsWith('video/');
 
-        const fileSizeKB =
-          mediaBuffer.length / 1024;
-
-        const isLargeFile =
-          fileSizeKB > 5000;
+        const isGif =
+          mimetype.includes('gif');
 
         const ffmpegBinary =
           resolveFfmpegPath();
@@ -284,190 +403,123 @@ module.exports = [
           ffmpegBinary
         );
 
-        let ffmpegCommand;
-
-        if (isAnimated) {
-          if (isLargeFile) {
-            ffmpegCommand =
-              `"${ffmpegBinary}" ` +
-              `-y ` +
-              `-i "${tempInput}" ` +
-              `-t 2 ` +
-              `-vf "crop=min(iw\\,ih):min(iw\\,ih),scale=512:512,fps=8" ` +
-              `-c:v libwebp ` +
-              `-preset default ` +
-              `-loop 0 ` +
-              `-vsync 0 ` +
-              `-pix_fmt yuva420p ` +
-              `-quality 30 ` +
-              `-compression_level 6 ` +
-              `-b:v 100k ` +
-              `-max_muxing_queue_size 1024 ` +
-              `"${tempOutput}"`;
-          } else {
-            ffmpegCommand =
-              `"${ffmpegBinary}" ` +
-              `-y ` +
-              `-i "${tempInput}" ` +
-              `-t 3 ` +
-              `-vf "crop=min(iw\\,ih):min(iw\\,ih),scale=512:512,fps=12" ` +
-              `-c:v libwebp ` +
-              `-preset default ` +
-              `-loop 0 ` +
-              `-vsync 0 ` +
-              `-pix_fmt yuva420p ` +
-              `-quality 50 ` +
-              `-compression_level 6 ` +
-              `-b:v 150k ` +
-              `-max_muxing_queue_size 1024 ` +
-              `"${tempOutput}"`;
-          }
-        } else {
-          ffmpegCommand =
-            `"${ffmpegBinary}" ` +
-            `-y ` +
-            `-i "${tempInput}" ` +
-            `-vf "crop=min(iw\\,ih):min(iw\\,ih),scale=512:512,format=rgba" ` +
-            `-c:v libwebp ` +
-            `-preset default ` +
-            `-loop 0 ` +
-            `-vsync 0 ` +
-            `-pix_fmt yuva420p ` +
-            `-quality 75 ` +
-            `-compression_level 6 ` +
-            `"${tempOutput}"`;
-        }
-
-        await new Promise((resolve, reject) => {
-          exec(
-            ffmpegCommand,
-            {
-              maxBuffer: 10 * 1024 * 1024
-            },
-            (error, stdout, stderr) => {
-              if (stdout) {
-                console.log(
-                  'FFmpeg output:',
-                  stdout
-                );
-              }
-
-              if (stderr) {
-                console.log(
-                  'FFmpeg log:',
-                  stderr
-                );
-              }
-
-              if (error) {
-                return reject(
-                  new Error(
-                    `FFmpeg failed: ${error.message}\n${stderr || ''}`
-                  )
-                );
-              }
-
-              resolve();
-            }
-          );
-        });
-
-        if (
-          !fs.existsSync(tempOutput)
-        ) {
-          throw new Error(
-            'FFmpeg did not create the sticker output file'
-          );
-        }
-
-        const outputStats =
-          fs.statSync(tempOutput);
-
-        if (outputStats.size === 0) {
-          throw new Error(
-            'FFmpeg created an empty sticker file'
-          );
-        }
-
-        const webpBuffer =
-          fs.readFileSync(tempOutput);
-
-        console.log(
-          `Sticker created: ${Math.round(webpBuffer.length / 1024)} KB`
-        );
+        let stickerBuffer;
 
         /*
-         * Add WhatsApp sticker metadata
+         * VIDEO
+         *
+         * FFmpeg creates square MP4 using libx264.
+         * wa-sticker-formatter then converts it into
+         * animated WebP using Sharp.
          */
-        const image = new webp.Image();
-
-        await image.load(webpBuffer);
-
-        const input = Array.isArray(args)
-          ? args.join(' ').trim()
-          : '';
-
-        const [
-          packArg,
-          authorArg
-        ] = input
-          ? input
-              .split('|')
-              .map(value => value.trim())
-          : [];
-
-        const metadata = {
-          'sticker-pack-id':
-            crypto.randomBytes(32).toString('hex'),
-
-          'sticker-pack-name':
-            packArg ||
-            configuredPackname ||
-            'supreme',
-
-          'sticker-pack-publisher':
-            authorArg ||
-            configuredAuthor ||
-            '',
-
-          emojis: ['🖼️']
-        };
-
-        const exifHeader = Buffer.from([
-          0x49, 0x49, 0x2A, 0x00,
-          0x08, 0x00, 0x00, 0x00,
-          0x01, 0x00, 0x41, 0x57,
-          0x07, 0x00, 0x00, 0x00,
-          0x00, 0x00, 0x16, 0x00,
-          0x00, 0x00
-        ]);
-
-        const metadataBuffer =
-          Buffer.from(
-            JSON.stringify(metadata),
-            'utf8'
+        if (isVideo) {
+          const videoOutputPath = path.join(
+            os.tmpdir(),
+            `black_sticker_video_${Date.now()}_${Math.random()
+              .toString(36)
+              .slice(2)}.mp4`
           );
 
-        const exif = Buffer.concat([
-          exifHeader,
-          metadataBuffer
-        ]);
+          tempFiles.push(videoOutputPath);
 
-        exif.writeUIntLE(
-          metadataBuffer.length,
-          14,
-          4
-        );
+          const isLargeFile =
+            mediaBuffer.length / 1024 > 5000;
 
-        image.exif = exif;
+          configureStickerFfmpeg(
+            ffmpegBinary
+          );
 
-        const finalSticker =
-          await image.save(null);
+          const preparedVideo =
+            await prepareVideo(
+              mediaBuffer,
+              videoOutputPath,
+              ffmpegBinary,
+              isLargeFile
+            );
+
+          const sticker =
+            new Sticker(preparedVideo, {
+              pack: metadata.pack,
+              author: metadata.author,
+              type: StickerTypes.FULL,
+              quality: isLargeFile ? 35 : 50,
+              background: 'transparent'
+            });
+
+          stickerBuffer =
+            await sticker.toBuffer();
+        }
+
+        /*
+         * GIF
+         *
+         * Do not send GIF through FFmpeg's
+         * libwebp encoder. Sharp handles the GIF.
+         */
+        else if (isGif) {
+          const sticker =
+            new Sticker(mediaBuffer, {
+              pack: metadata.pack,
+              author: metadata.author,
+              type: StickerTypes.FULL,
+              quality: 75,
+              background: 'transparent'
+            });
+
+          stickerBuffer =
+            await sticker.toBuffer();
+        }
+
+        /*
+         * IMAGE OR EXISTING STICKER
+         *
+         * Sharp crops the image to a 512x512 square.
+         */
+        else {
+          const squareImage =
+            await sharp(mediaBuffer)
+              .resize(512, 512, {
+                fit: 'cover',
+                position: 'centre'
+              })
+              .webp({
+                quality: 85
+              })
+              .toBuffer();
+
+          const sticker =
+            new Sticker(squareImage, {
+              pack: metadata.pack,
+              author: metadata.author,
+              type: StickerTypes.DEFAULT,
+              quality: 85,
+              background: 'transparent'
+            });
+
+          stickerBuffer =
+            await sticker.toBuffer();
+        }
+
+        if (
+          !stickerBuffer ||
+          !Buffer.isBuffer(stickerBuffer) ||
+          stickerBuffer.length === 0
+        ) {
+          throw new Error(
+            'Sticker output was empty'
+          );
+        }
+
+        if (stickerBuffer.length > 1024 * 1024) {
+          return reply(
+            `❌ Sticker is too large: ${(stickerBuffer.length / 1024 / 1024).toFixed(2)}MB. Try a shorter video or smaller image.`
+          );
+        }
 
         await client.sendMessage(
           m.chat,
           {
-            sticker: finalSticker
+            sticker: stickerBuffer
           },
           {
             quoted: m
@@ -479,8 +531,12 @@ module.exports = [
           error
         );
 
+        const message =
+          error?.message ||
+          String(error);
+
         await reply(
-          `❌ Sticker conversion failed:\n${error.message || error}`
+          `❌ Sticker conversion failed:\n${message.split('\n')[0]}`
         );
       } finally {
         tempFiles.forEach(deleteTempFile);

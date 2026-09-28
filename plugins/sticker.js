@@ -5,7 +5,6 @@ const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
 const { exec, execSync } = require('child_process');
-const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const webp = require('node-webpmux');
 
 const {
@@ -16,9 +15,9 @@ const {
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
 /*
- * FFmpeg resolver
+ * FFmpeg path resolver
  */
-const CANDIDATES = [
+const FFMPEG_CANDIDATES = [
   (() => {
     try {
       return execSync('which ffmpeg', {
@@ -43,6 +42,7 @@ const CANDIDATES = [
   (() => {
     try {
       const binary = require('ffmpeg-static');
+
       return binary && fs.existsSync(binary)
         ? binary
         : null;
@@ -52,99 +52,114 @@ const CANDIDATES = [
   })()
 ];
 
-let cachedFfmpeg = null;
+let cachedFfmpegPath = null;
 
 function resolveFfmpegPath() {
-  if (cachedFfmpeg) {
-    if (
-      cachedFfmpeg !== 'ffmpeg' &&
-      fs.existsSync(cachedFfmpeg)
-    ) {
-      return cachedFfmpeg;
-    }
-
-    cachedFfmpeg = null;
+  if (
+    cachedFfmpegPath &&
+    cachedFfmpegPath !== 'ffmpeg' &&
+    fs.existsSync(cachedFfmpegPath)
+  ) {
+    return cachedFfmpegPath;
   }
 
-  cachedFfmpeg =
-    CANDIDATES.find(
+  cachedFfmpegPath =
+    FFMPEG_CANDIDATES.find(
       file =>
         file &&
         file !== 'ffmpeg' &&
         fs.existsSync(file)
     ) || 'ffmpeg';
 
-  return cachedFfmpeg;
+  return cachedFfmpegPath;
 }
 
+/*
+ * Delete temporary files safely
+ */
 function deleteTempFile(file) {
   try {
     if (file && fs.existsSync(file)) {
       fs.unlinkSync(file);
     }
-  } catch {}
+  } catch (error) {
+    console.error(
+      'Could not delete temporary file:',
+      file,
+      error.message
+    );
+  }
 }
 
-function getQuotedMessage(message) {
-  return (
-    message.message?.extendedTextMessage?.contextInfo
-      ?.quotedMessage ||
-    message.message?.buttonsResponseMessage?.contextInfo
-      ?.quotedMessage ||
-    message.message?.listResponseMessage?.contextInfo
-      ?.quotedMessage ||
-    null
-  );
+/*
+ * Unwrap WhatsApp message wrappers
+ */
+function unwrapMessage(message) {
+  let current = message;
+
+  for (let i = 0; i < 5 && current; i++) {
+    if (current.ephemeralMessage?.message) {
+      current = current.ephemeralMessage.message;
+      continue;
+    }
+
+    if (current.viewOnceMessage?.message) {
+      current = current.viewOnceMessage.message;
+      continue;
+    }
+
+    if (current.viewOnceMessageV2?.message) {
+      current = current.viewOnceMessageV2.message;
+      continue;
+    }
+
+    if (current.viewOnceMessageV2Extension?.message) {
+      current = current.viewOnceMessageV2Extension.message;
+      continue;
+    }
+
+    break;
+  }
+
+  return current || {};
 }
 
-function resolveMedia(message) {
-  const messageType = Object.keys(
-    message.message || {}
-  )[0];
+/*
+ * Find media inside a WhatsApp message
+ */
+function findMedia(message) {
+  const unwrapped = unwrapMessage(message);
 
-  if (
-    messageType === 'imageMessage' ||
-    messageType === 'stickerMessage' ||
-    messageType === 'videoMessage' ||
-    messageType === 'documentMessage'
-  ) {
-    return {
-      type: messageType,
-      media: message.message[messageType]
-    };
-  }
+  const mediaTypes = [
+    'imageMessage',
+    'videoMessage',
+    'stickerMessage',
+    'documentMessage'
+  ];
 
-  const quoted = getQuotedMessage(message);
-
-  if (!quoted) {
-    return null;
-  }
-
-  const quotedType = Object.keys(quoted || {})[0];
-
-  if (
-    quotedType === 'imageMessage' ||
-    quotedType === 'stickerMessage' ||
-    quotedType === 'videoMessage' ||
-    quotedType === 'documentMessage'
-  ) {
-    return {
-      type: quotedType,
-      media: quoted[quotedType]
-    };
+  for (const type of mediaTypes) {
+    if (unwrapped[type]) {
+      return {
+        type,
+        media: unwrapped[type]
+      };
+    }
   }
 
   return null;
 }
 
+/*
+ * Sticker plugin
+ */
 module.exports = [
   {
     command: ['sticker'],
     aliases: ['s', 'stiker'],
     description:
-      'Convert image/video/gif to a perfect square sticker',
+      'Convert an image, video, or gif into a WhatsApp sticker',
     usage:
-      '.sticker (reply to image/video/gif) [packname|author]',
+      '.sticker reply to image/video [packname|author]',
     category: 'general',
 
     handler: async (
@@ -152,22 +167,22 @@ module.exports = [
       m,
       {
         reply,
-        args = {}
+        args = [],
+        msgR
       }
     ) => {
-      const tmpDir = os.tmpdir();
-
-      const uniqueId = `${Date.now()}_${Math.random()
-        .toString(36)
-        .slice(2)}`;
+      const uniqueId =
+        `${Date.now()}_${Math.random()
+          .toString(36)
+          .slice(2)}`;
 
       const tempInput = path.join(
-        tmpDir,
+        os.tmpdir(),
         `black_sticker_${uniqueId}.input`
       );
 
       const tempOutput = path.join(
-        tmpDir,
+        os.tmpdir(),
         `black_sticker_${uniqueId}.webp`
       );
 
@@ -177,25 +192,20 @@ module.exports = [
       ];
 
       try {
-        const messageToQuote = m;
-        let targetMessage = m;
+        /*
+         * First check the quoted message.
+         * msgR is the raw quoted WhatsApp message
+         * provided by BLACK-MD.
+         */
+        let mediaInfo = findMedia(msgR);
 
-        const quotedInfo =
-          m.message?.extendedTextMessage
-            ?.contextInfo;
-
-        if (quotedInfo?.quotedMessage) {
-          targetMessage = {
-            key: {
-              remoteJid: m.chat,
-              id: quotedInfo.stanzaId,
-              participant: quotedInfo.participant
-            },
-            message: quotedInfo.quotedMessage
-          };
+        /*
+         * Also support sending an image/video directly
+         * with .sticker as its caption.
+         */
+        if (!mediaInfo) {
+          mediaInfo = findMedia(m.message);
         }
-
-        const mediaInfo = resolveMedia(targetMessage);
 
         if (!mediaInfo) {
           return reply(
@@ -204,31 +214,37 @@ module.exports = [
         }
 
         const {
-          type,
+          type: mediaType,
           media
         } = mediaInfo;
 
         if (!media) {
           return reply(
-            '🖼️ Please reply to an image/video/gif with .sticker, or send one with .sticker as the caption.'
+            '🖼️ The quoted message does not contain usable media.'
           );
         }
 
+        /*
+         * Your bot already has its own media downloader.
+         * It expects the media object itself to contain mtype.
+         */
+        const downloadableMedia = {
+          ...media,
+          mtype: mediaType
+        };
+
         const mediaBuffer =
-          await downloadMediaMessage(
-            targetMessage,
-            'buffer',
-            {},
-            {
-              logger: undefined,
-              reuploadRequest:
-                client.updateMediaMessage
-            }
+          await client.downloadMediaMessage(
+            downloadableMedia
           );
 
-        if (!mediaBuffer) {
+        if (
+          !mediaBuffer ||
+          !Buffer.isBuffer(mediaBuffer) ||
+          mediaBuffer.length === 0
+        ) {
           return reply(
-            '❌ Failed to download media. Please try again.'
+            '❌ Failed to download the quoted media.'
           );
         }
 
@@ -244,10 +260,10 @@ module.exports = [
         );
 
         const isAnimated =
-          media.mimetype?.includes('gif') ||
+          mediaType === 'videoMessage' ||
           media.mimetype?.includes('video') ||
-          media.seconds > 0 ||
-          type === 'videoMessage';
+          media.mimetype?.includes('gif') ||
+          Number(media.seconds || 0) > 0;
 
         const fileSizeKB =
           mediaBuffer.length / 1024;
@@ -255,12 +271,26 @@ module.exports = [
         const isLargeFile =
           fileSizeKB > 5000;
 
+        const ffmpegBinary =
+          resolveFfmpegPath();
+
+        console.log(
+          'Sticker media detected:',
+          mediaType
+        );
+
+        console.log(
+          'Using FFmpeg:',
+          ffmpegBinary
+        );
+
         let ffmpegCommand;
 
         if (isAnimated) {
           if (isLargeFile) {
             ffmpegCommand =
-              `"${resolveFfmpegPath()}" ` +
+              `"${ffmpegBinary}" ` +
+              `-y ` +
               `-i "${tempInput}" ` +
               `-t 2 ` +
               `-vf "crop=min(iw\\,ih):min(iw\\,ih),scale=512:512,fps=8" ` +
@@ -276,7 +306,8 @@ module.exports = [
               `"${tempOutput}"`;
           } else {
             ffmpegCommand =
-              `"${resolveFfmpegPath()}" ` +
+              `"${ffmpegBinary}" ` +
+              `-y ` +
               `-i "${tempInput}" ` +
               `-t 3 ` +
               `-vf "crop=min(iw\\,ih):min(iw\\,ih),scale=512:512,fps=12" ` +
@@ -293,7 +324,8 @@ module.exports = [
           }
         } else {
           ffmpegCommand =
-            `"${resolveFfmpegPath()}" ` +
+            `"${ffmpegBinary}" ` +
+            `-y ` +
             `-i "${tempInput}" ` +
             `-vf "crop=min(iw\\,ih):min(iw\\,ih),scale=512:512,format=rgba" ` +
             `-c:v libwebp ` +
@@ -309,25 +341,31 @@ module.exports = [
         await new Promise((resolve, reject) => {
           exec(
             ffmpegCommand,
+            {
+              maxBuffer: 10 * 1024 * 1024
+            },
             (error, stdout, stderr) => {
-              if (error) {
-                console.error(
-                  'FFmpeg error:',
-                  error
+              if (stdout) {
+                console.log(
+                  'FFmpeg output:',
+                  stdout
                 );
-
-                console.error(
-                  'FFmpeg stderr:',
-                  stderr
-                );
-
-                return reject(error);
               }
 
-              console.log(
-                'FFmpeg stdout:',
-                stdout
-              );
+              if (stderr) {
+                console.log(
+                  'FFmpeg log:',
+                  stderr
+                );
+              }
+
+              if (error) {
+                return reject(
+                  new Error(
+                    `FFmpeg failed: ${error.message}\n${stderr || ''}`
+                  )
+                );
+              }
 
               resolve();
             }
@@ -338,7 +376,7 @@ module.exports = [
           !fs.existsSync(tempOutput)
         ) {
           throw new Error(
-            'FFmpeg failed to create output file'
+            'FFmpeg did not create the sticker output file'
           );
         }
 
@@ -347,29 +385,23 @@ module.exports = [
 
         if (outputStats.size === 0) {
           throw new Error(
-            'FFmpeg created empty output file'
+            'FFmpeg created an empty sticker file'
           );
         }
 
         const webpBuffer =
           fs.readFileSync(tempOutput);
 
-        const finalSizeKB =
-          webpBuffer.length / 1024;
-
         console.log(
-          `Final sticker size: ${Math.round(finalSizeKB)} KB`
+          `Sticker created: ${Math.round(webpBuffer.length / 1024)} KB`
         );
 
-        if (finalSizeKB > 1000) {
-          console.log(
-            `Warning: Sticker size is ${Math.round(finalSizeKB)} KB`
-          );
-        }
+        /*
+         * Add WhatsApp sticker metadata
+         */
+        const image = new webp.Image();
 
-        const img = new webp.Image();
-
-        await img.load(webpBuffer);
+        await image.load(webpBuffer);
 
         const input = Array.isArray(args)
           ? args.join(' ').trim()
@@ -401,7 +433,7 @@ module.exports = [
           emojis: ['🖼️']
         };
 
-        const exifAttr = Buffer.from([
+        const exifHeader = Buffer.from([
           0x49, 0x49, 0x2A, 0x00,
           0x08, 0x00, 0x00, 0x00,
           0x01, 0x00, 0x41, 0x57,
@@ -410,44 +442,45 @@ module.exports = [
           0x00, 0x00
         ]);
 
-        const jsonBuffer = Buffer.from(
-          JSON.stringify(metadata),
-          'utf8'
-        );
+        const metadataBuffer =
+          Buffer.from(
+            JSON.stringify(metadata),
+            'utf8'
+          );
 
         const exif = Buffer.concat([
-          exifAttr,
-          jsonBuffer
+          exifHeader,
+          metadataBuffer
         ]);
 
         exif.writeUIntLE(
-          jsonBuffer.length,
+          metadataBuffer.length,
           14,
           4
         );
 
-        img.exif = exif;
+        image.exif = exif;
 
-        const finalBuffer =
-          await img.save(null);
+        const finalSticker =
+          await image.save(null);
 
         await client.sendMessage(
           m.chat,
           {
-            sticker: finalBuffer
+            sticker: finalSticker
           },
           {
-            quoted: messageToQuote
+            quoted: m
           }
         );
       } catch (error) {
         console.error(
-          'Sticker command error:',
+          'Sticker command actual error:',
           error
         );
 
         await reply(
-          '❌ Failed to create sticker! Try with an image, video, or gif.'
+          `❌ Sticker conversion failed:\n${error.message || error}`
         );
       } finally {
         tempFiles.forEach(deleteTempFile);

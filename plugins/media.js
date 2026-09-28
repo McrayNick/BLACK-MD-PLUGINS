@@ -7,7 +7,7 @@ const axios = global.axios || require('axios');
 const { uploadToUguu, upscaleImage } = require('../lib/uploads');
 
 module.exports = [
-
+/*
 {
   command: ['sticker'],
   aliases: ['stik', 's', 'stikpack'],
@@ -248,7 +248,8 @@ module.exports = [
   }
 },
 
-
+*/
+  
   {
   command: ['take'],
   aliases: ['steal'],

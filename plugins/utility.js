@@ -425,7 +425,7 @@ module.exports = [
         }, { quoted: m });
       } catch (err) {
         client.sendMessage(m.chat, {
-          image: { url: 'https://files.catbox.moe/pevpi2.jpg' },
+          image: { url: 'https://u.pone.rs/cnaocqvu.png' },
           caption:
             ` Hello 👋 *${pushname}*,\n` +
             `╔══≪ ✦ ≫══════════≪ ✦ ≫══╗\n` +

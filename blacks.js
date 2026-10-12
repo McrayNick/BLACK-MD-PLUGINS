@@ -8,7 +8,7 @@ const fetch = require('node-fetch');
 global.axios = require('axios').default;
 const chalk = require('chalk');
 const speed = require('performance-now');
-const api = 'https://apiskeith2-production-3679.up.railway.app';
+const api = 'https://apis.keithsite.lol';
 const fetchSettings = require('./database/fetchSettings');
 const { antiDeleteHandler } = require('./lib/antidelete');
 const { botname, author, packname, mycode, admin, botAdmin, dev, group, bad, owner, NotOwner } = require('./set.js');
@@ -421,7 +421,7 @@ if (gptdm === 'on' && !m.isGroup && !mek.key.fromMe && !cmd && body && body.trim
         return d?.BK9?.trim();
         },
       async () => {
-        const r = await fetch(`https://ravenn.site/keithai?q=${encodeURIComponent(prompt)}`);
+        const r = await fetch(`https://apis.keithsite.lol/keithai?q=${encodeURIComponent(prompt)}`);
         const d = await r.json();
         return (d?.reply || d?.result || d?.response || d?.message || d?.answer)?.trim();
       },

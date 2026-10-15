@@ -7,7 +7,6 @@ const axios = global.axios || require('axios');
 const { uploadToUguu, upscaleImage } = require('../lib/uploads');
 
 module.exports = [
-/*
 {
   command: ['sticker'],
   aliases: ['stik', 's', 'stikpack'],
@@ -29,7 +28,6 @@ module.exports = [
     const path = require('path');
     const { execSync } = require('child_process');
     const { downloadMediaMessage } = require('@whiskeysockets/baileys');
-    const sharp = require('sharp');
     const {
       Sticker,
       StickerTypes
@@ -194,46 +192,42 @@ module.exports = [
           );
         }
       } else {
-        const metadata = await sharp(buffer).metadata();
-        const { width, height } = metadata;
+        // ── IMAGE: convert to webp using ffmpeg instead of sharp ──
+        const id = Date.now();
+        const tmpDir = os.tmpdir();
+        const inputPath = path.join(tmpDir, `stk_img_in_${id}`);
+        const outputPath = path.join(tmpDir, `stk_img_out_${id}.webp`);
 
-        let resizeOptions;
+        fs.writeFileSync(inputPath, buffer);
 
-        if (width === height) {
-          resizeOptions = {
-            width: 512,
-            height: 512,
-            fit: 'cover'
-          };
-        } else {
-          resizeOptions = {
-            width: 512,
-            height: 512,
-            fit: 'contain',
-            background: {
-              r: 0,
-              g: 0,
-              b: 0,
-              alpha: 0
-            }
-          };
+        try {
+          execSync(
+            `"${ffmpegPath}" -y -i "${inputPath}" ` +
+              `-vf "scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000" ` +
+              `-vcodec libwebp -lossless 0 -compression_level 6 -q:v 85 -preset default "${outputPath}"`,
+            { timeout: 30000, stdio: 'pipe' }
+          );
+
+          if (!fs.existsSync(outputPath)) {
+            throw new Error('FFmpeg did not create webp output');
+          }
+
+          const webpBuffer = fs.readFileSync(outputPath);
+
+          const sticker = new Sticker(webpBuffer, {
+            pack: pushName || 'Sticker',
+            author: author || 'Bot',
+            type: StickerTypes.FULL,
+            categories: ['🤩', '🎉'],
+            quality: 85,
+            background: 'transparent'
+          });
+
+          stickerBuffer = await sticker.toBuffer();
+        } finally {
+          try { fs.unlinkSync(inputPath); } catch {}
+          try { fs.unlinkSync(outputPath); } catch {}
         }
-
-        const webpBuffer = await sharp(buffer)
-          .resize(512, 512, resizeOptions)
-          .webp({ quality: 85 })
-          .toBuffer();
-
-        const sticker = new Sticker(webpBuffer, {
-          pack: pushName || 'Sticker',
-          author: author || 'Bot',
-          type: StickerTypes.FULL,
-          categories: ['🤩', '🎉'],
-          quality: 85,
-          background: 'transparent'
-        });
-
-        stickerBuffer = await sticker.toBuffer();
       }
 
       await client.sendMessage(
@@ -247,8 +241,6 @@ module.exports = [
     }
   }
 },
-
-*/
   
   {
   command: ['take'],

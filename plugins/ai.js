@@ -1,7 +1,6 @@
+
 'use strict';
 
-const fs = require('fs');
-const wormgptSessions = new Map();
 const axios = global.axios || require('axios');
 const fetch = require('node-fetch');
 const { uploadToUguu, uploadToImgBB } = require('../lib/uploads');
@@ -9,6 +8,8 @@ const { uploadToUguu, uploadToImgBB } = require('../lib/uploads');
 const gptSessions = new Map();
 const geminiSessions = new Map();
 const llamaSessions = new Map();
+const wormgptSessions = new Map();
+
 
 const MAX_HISTORY = 10;
 function getHistory(store, jid) {
@@ -25,43 +26,41 @@ function buildPrompt(history, text) {
   const ctx = history.map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`).join('\n');
   return `Previous conversation:\n${ctx}\n\nUser: ${text}`;
 }
-function safeUnlink(p) {
-  try { if (p && fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
-}
+
 
 module.exports = [
 
-  // ── .ai / .llama ──────────────────────────────────────────────────────────
+  // ── .ai / .gemini2 — Gemini via Bk9 (with quoted context) ────────────
   {
-    command: ['ai'],
-    aliases: ['llama'],
-    description: 'Chat with LLaMA AI (remembers conversation)',
-    category: 'ai',
-    handler: async (client, m, { reply, text }) => {
-      if (!text) return reply('Ask me anything!\n\n💡: Use *.ai -clear* to reset your conversation history.');
-      const jid = m.sender || m.chat;
-      if (text.trim() === '-clear') {
-        llamaSessions.delete(jid);
-        return reply('🧹 *AI chat history cleared!* Fresh start.');
-      }
-      try {
-        let msg = await client.sendMessage(m.chat, { text: `🤖 Thinking...` }, { quoted: m });
-        const history = getHistory(llamaSessions, jid);
-        const prompt = buildPrompt(history, text);
-        const res = await fetch(`https://api.bk9.dev/ai/llama?q=${encodeURIComponent(prompt)}`);
-        const data = await res.json();
-        if (!data?.status || !data?.BK9) return client.sendMessage(m.chat, { text: `❌ No response from AI`, edit: msg.key }, { quoted: m });
-        const replyText = data.BK9;
-        pushHistory(llamaSessions, jid, 'user', text);
-        pushHistory(llamaSessions, jid, 'assistant', replyText);
-        await client.sendMessage(m.chat, { text: `*${replyText}*`, edit: msg.key }, { quoted: m });
-      } catch (err) {
-        m.reply('❌ Error connecting to AI. Try again later.');
-      }
+  command: ['ai'],
+  aliases: ['llama'],
+  description: 'Chat with LLaMA AI (remembers conversation)',
+  category: 'ai',
+  handler: async (client, m, { reply, text }) => {
+    if (!text) return reply('Ask me anything!\n\n💡: Use *.ai -clear* to reset your conversation history.');
+    const jid = m.sender || m.chat;
+    if (text.trim() === '-clear') {
+      llamaSessions.delete(jid);
+      return reply('🧹 *AI chat history cleared!* Fresh start.');
     }
-  },
+    try {
+      let msg = await client.sendMessage(m.chat, { text: `🤖 Thinking...` }, { quoted: m });
+      const history = getHistory(llamaSessions, jid);
+      const prompt = buildPrompt(history, text);
+      const res = await fetch(`https://api.bk9.dev/ai/llama?q=${encodeURIComponent(prompt)}`);
+      const data = await res.json();
+      if (!data?.status || !data?.BK9) return client.sendMessage(m.chat, { text: `❌ No response from AI`, edit: msg.key }, { quoted: m });
+      const replyText = data.BK9;
+      pushHistory(llamaSessions, jid, 'user', text);
+      pushHistory(llamaSessions, jid, 'assistant', replyText);
+      await client.sendMessage(m.chat, { text: `*${replyText}*`, edit: msg.key }, { quoted: m });
+    } catch (err) {
+      m.reply('❌ Error connecting to AI. Try again later.');
+    }
+  }
+},
 
-  // ── .gpt / .chatgpt ───────────────────────────────────────────────────────
+  // ── .gpt / .chatgpt — GPT-4 via ravennsite ────────────────────────────────
   {
     command: ['gpt'],
     aliases: ['chatgpt'],
@@ -108,7 +107,6 @@ module.exports = [
         let msg = await client.sendMessage(m.chat, { text: `🤖 Thinking...` }, { quoted: m });
         const history = getHistory(geminiSessions, jid);
         const prompt = buildPrompt(history, text);
-        // NOTE: if your API has a Gemini route, change this to /ai/gemini
         const res = await axios.get(`${api}/ai/gpt?q=${encodeURIComponent(prompt)}`);
         const data = res.data;
         if (!data?.status || !data?.result) return client.sendMessage(m.chat, { text: `❌ No response from AI`, edit: msg.key }, { quoted: m });
@@ -121,58 +119,54 @@ module.exports = [
       }
     }
   },
-
-  // ── .vision — LLaMA Vision ────────────────────────────────────────────────
+ 
+  // ── .vision / .imgai / .analyze / .geminivision — Image analysis via ravennsite ─────────
   {
-    command: ['vision'],
-    aliases: ['imgai', 'analyze', 'llamavision'],
-    description: 'Analyze an image with LLaMA Vision AI (quote an image)',
-    category: 'ai',
-    handler: async (client, m, { reply, text }) => {
-      if (!m.quoted) return reply('📌 Reply to an image with a question.\nExample: *.vision what is this?*');
-      if (!text) return reply('❌ Provide a question about the image!\nExample: *.vision what is in this image?*');
-      const mime = m.quoted.mimetype || '';
-      if (!/image/.test(mime)) return reply('❌ Only image messages are supported.');
-      let filePath;
-      try {
-        await client.sendMessage(m.chat, { react: { text: '🤖', key: m.key } });
-        await reply('🔍 Analyzing your image...');
+  command: ['vision'],
+  aliases: ['imgai', 'analyze', 'llamavision'],
+  description: 'Analyze an image with LLaMA Vision AI (quote an image)',
+  category: 'ai',
+  handler: async (client, m, { reply, text }) => {
+    if (!m.quoted) return reply('📌 Reply to an image with a question.\nExample: *.vision2 what is this?*');
+    if (!text) return reply('❌ Provide a question about the image!\nExample: *.vision2 what is in this image?*');
+    const mime = m.quoted.mimetype || '';
+    if (!/image/.test(mime)) return reply('❌ Only image messages are supported.');
+    try {
+      await client.sendMessage(m.chat, { react: { text: '🤖', key: m.key } });
+      await reply('🔍 Analyzing your image...');
 
-        filePath = await client.downloadAndSaveMediaMessage(m.quoted);
-        if (!filePath) return reply('❌ Failed to download image.');
+      const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
+      if (!filePath) return reply('❌ Failed to download image.');
 
-        const imageUrl = await uploadToUguu(filePath);
+      const imageUrl = await uploadToUguu(filePath);
+      try { require('fs').unlinkSync(filePath); } catch (_) {}
 
-        const res = await fetch(
-          `https://api.bk9.dev/ai/vision?q=${encodeURIComponent(text)}&image_url=${encodeURIComponent(imageUrl)}&model=meta-llama/llama-4-scout-17b-16e-instruct`
-        );
-        const data = await res.json();
-        if (!data?.status || !data?.BK9) return reply('❌ No response from Vision AI. Try again.');
+      const res = await fetch(
+        `https://api.bk9.dev/ai/vision?q=${encodeURIComponent(text)}&image_url=${encodeURIComponent(imageUrl)}&model=meta-llama/llama-4-scout-17b-16e-instruct`
+      );
+      const data = await res.json();
+      if (!data?.status || !data?.BK9) return reply('❌ No response from Vision AI. Try again.');
 
-        await reply(`🤖 *Vision Analysis*\n\n${data.BK9}`);
-      } catch (err) {
-        reply('❌ Failed to analyze image.');
-      } finally {
-        safeUnlink(filePath);
-      }
+      await reply(`🤖 *Vision Analysis*\n\n${data.BK9}`);
+    } catch (err) {
+      reply('❌ Failed to analyze image.');
     }
-  },
-
-  // ── .vision2 — Image analysis via api ─────────────────────────────────────
+  }
+},
+ 
   {
     command: ['vision2'],
     aliases: ['imgai2', 'analyze2', 'geminivision'],
     description: 'Analyze an image with AI (quote an image)',
     category: 'ai',
     handler: async (client, m, { reply, text, api }) => {
-      let filePath;
       try {
         if (!m.quoted) return m.reply('📌 Reply to an image message to analyze it');
         if (!text) return m.reply('❌ Provide a question/instruction!');
         const mime = m.quoted.mimetype || '';
         if (!/image/.test(mime)) return m.reply('❌ Only image messages are supported');
 
-        filePath = await client.downloadAndSaveMediaMessage(m.quoted);
+        let filePath = await client.downloadAndSaveMediaMessage(m.quoted);
         if (!filePath) return m.reply('❌ Failed to download image');
 
         let imageUrl = await uploadToUguu(filePath);
@@ -186,20 +180,21 @@ module.exports = [
         if (!result?.status || !result?.result) return m.reply('❌ No response from Vision AI');
 
         await m.reply(result.result);
+
+        const fs = require('fs');
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
       } catch (err) {
         m.reply('❌ Failed to analyze image.');
-      } finally {
-        safeUnlink(filePath);
       }
     }
   },
 
-  // ── .define ───────────────────────────────────────────────────────────────
+  
   {
     command: ['define'],
     description: 'Define a word',
     category: 'ai',
-    handler: async (client, m, { reply, text }) => {
+    handler: async (client, m, { reply, text, from }) => {
       if (!text) return m.reply('Please provide a word.');
       try {
         const response = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(text)}`);
@@ -207,37 +202,40 @@ module.exports = [
         const data = await response.json();
         if (!data || !data[0] || !data[0].meanings || data[0].meanings.length === 0) return m.reply('No definitions found for the provided word.');
         const definition = data[0].meanings[0].definitions[0].definition;
-        await client.sendMessage(m.chat, { text: definition }, { quoted: m });
+        await client.sendMessage(from, { text: definition }, { quoted: m });
       } catch (error) {
         m.reply('An error occurred while fetching the data. Please try again later.\n' + error);
       }
     }
   },
 
-  // ── .google ───────────────────────────────────────────────────────────────
   {
     command: ['google'],
     description: 'Google search',
     category: 'ai',
     handler: async (client, m, { reply, text }) => {
-      if (!text) return m.reply('Provide a search term!\nEg: .Google What is treason');
-      try {
-        const { data } = await axios.get(
-          `https://www.googleapis.com/customsearch/v1?q=${encodeURIComponent(text)}&key=${process.env.GOOGLE_KEY}&cx=baf9bdb0c631236e5`
-        );
-        if (!data.items?.length) return m.reply('❌ Unable to find a result');
-        let tex = `SEARCH FROM GOOGLE\n🔍 Term:- ${text}\n\n`;
-        for (const it of data.items) {
-          tex += `🪧 Title:- ${it.title}\n🖥 Description:- ${it.snippet}\n🌐 Link:- ${it.link}\n\n`;
+      const axios = require("axios");
+        if (!text) {
+            m.reply('Provide a search term!\nEg: .Google What is treason')
+            return;
         }
-        m.reply(tex);
-      } catch (e) {
-        m.reply('❌ Search failed: ' + (e.response?.data?.error?.message || e.message));
-      }
-    }
+        let {
+            data
+        } = await axios.get(`https://www.googleapis.com/customsearch/v1?q=${text}&key=AIzaSyDMbI3nvmQUrfjoCJYLS69Lej1hSXQjnWI&cx=baf9bdb0c631236e5`)
+        if (data.items.length == 0) {
+            m.reply("❌ Unable to find a result")
+            return;
+        }
+        let tex = `SEARCH FROM GOOGLE\n🔍 Term:- ${text}\n\n`;
+        for (let i = 0; i < data.items.length; i++) {
+            tex += `🪧 Title:- ${data.items[i].title}\n🖥 Description:- ${data.items[i].snippet}\n🌐 Link:- ${data.items[i].link}\n\n`
+        }
+        m.reply(tex)
+     }
   },
 
-  // ── .image / .img — Image search (album) ──────────────────────────────────
+
+  // ── .image / .img — Image search (album) via ravvensite ───────────────────
   {
     command: ['image'],
     aliases: ['img'],
@@ -261,15 +259,16 @@ module.exports = [
           }
         }
         if (album.length === 0) return m.reply('❌ Failed to load images.');
-
-        await client.sendMessage(m.chat, { album }, { quoted: m });
+      
+          await client.sendMessage(m.chat, { album }, { quoted: m });
+        
       } catch (err) {
         m.reply('❌ Error: ' + err.message);
       }
     }
   },
 
-  // ── .image2 / .img2 — Flickr image search ─────────────────────────────────
+  // ── .image2 / .ai-img — Flickr image search ──────────────────────────────
   {
     command: ['image2'],
     aliases: ['img2'],
@@ -286,7 +285,7 @@ module.exports = [
           count = Math.min(Math.max(parseInt(countMatch[1]), 1), 5);
           query = text.slice(0, text.lastIndexOf(countMatch[0])).trim();
         }
-        const FLICKR_KEY = process.env.FLICKR_KEY;
+        const FLICKR_KEY = '3e7cc266ae2b0e0d78e279ce8e361736';
         const apiUrl = `https://api.flickr.com/services/rest/?method=flickr.photos.search&api_key=${FLICKR_KEY}&text=${encodeURIComponent(query)}&format=json&nojsoncallback=1&per_page=${count + 5}&sort=relevance&content_type=1&extras=url_m,url_l&safe_search=1`;
         const apiRes = await fetch(apiUrl, { timeout: 15000 });
         const data = await apiRes.json();
@@ -317,7 +316,7 @@ module.exports = [
     }
   },
 
-  // ── .image3 / .img3 — Yandex image scraper ────────────────────────────────
+  // ── .img3 / .image3 — Yandex image scraper ────────────────────────────────
   {
     command: ['image3'],
     aliases: ['img3'],
@@ -370,7 +369,7 @@ module.exports = [
     }
   },
 
-  // ── .imagine / .createimage / .dalle — Pollinations ───────────────────────
+// ── .dalle / .createimage / .imagine — Image generation via Pollinations ──
   {
     command: ['imagine'],
     aliases: ['createimage', 'dalle'],
@@ -398,8 +397,8 @@ module.exports = [
       }
     }
   },
-  
-// ── .wormgpt — Uncensored AI with memory ─────────────────────────────────
+
+  // ── .wormgpt — Uncensored AI with memory ─────────────────────────────────
 {
   command: ['wormgpt'],
   aliases: ['wgpt', 'worm', 'dark', 'darkgpt'],
@@ -435,59 +434,53 @@ module.exports = [
     }
   }
 },
-  
-  // ── .url — Upload quoted image/video to ImgBB ─────────────────────────────
+
+  // ── .url — Upload quoted image/video to ImBB, reply with link ──────────
   {
     command: ['url'],
     aliases: ['uploads'],
     description: 'Upload a quoted image and get a direct link',
     category: 'ai',
     handler: async (client, m) => {
-      let filePath;
-      try {
-        let q = m.quoted ? m.quoted : m;
-        let mime = (q.msg || q).mimetype || '';
-        if (!mime) return m.reply('Quote an image or video');
-        let mediaBuffer = await q.download();
-        if (mediaBuffer.length > 10 * 1024 * 1024) return m.reply('Media is too large.');
-        let isTele = /image\/(png|jpe?g|gif)|video\/mp4/.test(mime);
-        if (!isTele) return m.reply('Error occurred...');
-        filePath = await client.downloadAndSaveMediaMessage(q);
-        let link = await uploadToImgBB(filePath);
+      let q = m.quoted ? m.quoted : m;
+      let mime = (q.msg || q).mimetype || '';
+      if (!mime) return m.reply('Quote an image or video');
+      let mediaBuffer = await q.download();
+      if (mediaBuffer.length > 10 * 1024 * 1024) return m.reply('Media is too large.');
+      let isTele = /image\/(png|jpe?g|gif)|video\/mp4/.test(mime);
+      if (isTele) {
+        let fta2 = await client.downloadAndSaveMediaMessage(q);
+        let link = await uploadToImgBB(fta2);
         m.reply(`Media Link:-\n\n${link}`);
-      } catch (e) {
-        m.reply('❌ Upload failed: ' + e.message);
-      } finally {
-        safeUnlink(filePath);
+      } else {
+        m.reply('Error occurred...');
       }
     }
   },
 
-  // ── .upload — Upload quoted image/video/audio ─────────────────────────────
   {
-    command: ['upload'],
-    description: 'Upload a quoted image, video, or audio and get a link',
-    category: 'ai',
-    handler: async (client, m, { reply }) => {
-      let filePath;
-      try {
-        const { uploadMedia } = require('../lib/uploads');
-        let q = m.quoted ? m.quoted : m;
-        let mime = (q.msg || q).mimetype || '';
-        if (!mime) return reply('Quote an image, video, or audio message.');
-        let isSupported = /^(image|video|audio)\//.test(mime);
-        if (!isSupported) return reply('Only image, video, and audio files are supported.');
-        let mediaBuffer = await q.download();
-        if (mediaBuffer.length > 190 * 1024 * 1024) return reply('Media is too large (max ~190MB).');
-        filePath = await client.downloadAndSaveMediaMessage(q);
-        let link = await uploadMedia(filePath);
-        reply(`Media Link:-\n\n${link}`);
-      } catch (err) {
-        reply(`Upload failed: ${err.message}`);
-      } finally {
-        safeUnlink(filePath);
-      }
+  command: ['upload'],
+  description: 'Upload a quoted image, video, or audio and get a link',
+  category: 'ai',
+  handler: async (client, m, { reply }) => {
+    const { uploadMedia } = require('../lib/uploads');
+    let q = m.quoted ? m.quoted : m;
+    let mime = (q.msg || q).mimetype || '';
+    if (!mime) return reply('Quote an image, video, or audio message.');
+    let isSupported = /^(image|video|audio)\//.test(mime);
+    if (!isSupported) return reply('Only image, video, and audio files are supported.');
+    let mediaBuffer = await q.download();
+    if (mediaBuffer.length > 190 * 1024 * 1024) return reply('Media is too large (max ~190MB).');
+    try {
+      let filePath = await client.downloadAndSaveMediaMessage(q);
+      let link = await uploadMedia(filePath);
+      reply(`Media Link:-\n\n${link}`);
+    } catch (err) {
+      reply(`Upload failed: ${err.message}`);
     }
-  },
+  }
+},
 
 ];
+
+```

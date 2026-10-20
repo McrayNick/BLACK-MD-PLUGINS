@@ -398,9 +398,8 @@ module.exports = [
       }
     }
   },
-
-  // ── .worm / . wormgpt / .wgpt — Pollinations ───────────────────────
-```
+  
+// ── .wormgpt — Uncensored AI with memory ─────────────────────────────────
 {
   command: ['wormgpt'],
   aliases: ['wgpt', 'worm', 'dark', 'darkgpt'],
@@ -435,9 +434,8 @@ module.exports = [
       reply('❌ WormGPT error: ' + err.message);
     }
   }
-}
-```
-
+},
+  
   // ── .url — Upload quoted image/video to ImgBB ─────────────────────────────
   {
     command: ['url'],

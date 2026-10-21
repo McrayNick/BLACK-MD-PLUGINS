@@ -1,4 +1,3 @@
-
 'use strict';
 
 const axios = global.axios || require('axios');
@@ -482,5 +481,3 @@ module.exports = [
 },
 
 ];
-
-```

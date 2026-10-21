@@ -21,15 +21,37 @@ function formatCmd(name) {
 }
 
 // ─── Menu media ──────────────────────────────────────────────────────────
-// Order of preference (no external hosting needed):
-//   1. Your own files in <repo>/media/  ->  menu.jpg (or .png)  and  menu.mp4
-//   2. Auto-generated banner image / short video (made with jimp + ffmpeg-static)
-//   3. Remote URLs below (last resort)
+// Order of preference:
+//   1. Your own files in a media/ folder on the bot  ->  menu.jpg (or .png)  and  menu.mp4
+//   2. Downloaded from your GitHub repo's media/ folder (raw link), then catbox
+//   3. Auto-generated banner image / short video (made with jimp + ffmpeg-static)
 
 const MEDIA_DIR = path.join(__dirname, '..', 'media');
-const MENU_VIDEO_URL = 'https://files.catbox.moe/yi3wkc.mp4';
-const MENU_IMAGE_URL = 'https://files.catbox.moe/t03s77.jpg';
-const MENU_THUMB = 'https://files.catbox.moe/hzlqe0.jpg';
+// Folders searched for your own menu.jpg / menu.mp4 (first match wins)
+const MEDIA_DIRS = [
+  MEDIA_DIR,
+  path.join(process.cwd(), 'media'),
+  path.join(__dirname, 'media'),
+];
+
+// Case-insensitive search: menu.jpg, Menu.JPG, menu.png, menu.mp4 ...
+function findCustomMedia(isVideo) {
+  const re = isVideo ? /^menu.*\.mp4$/i : /^menu.*\.(jpe?g|png)$/i;
+  for (const dir of MEDIA_DIRS) {
+    try {
+      const hit = fs.readdirSync(dir).find(f => re.test(f) && !/generated/i.test(f));
+      if (hit) return path.join(dir, hit);
+    } catch {}
+  }
+  return null;
+}
+// Your own GitHub repo (public). If your files are named differently, change these.
+const RAW_BASE = 'https://raw.githubusercontent.com/McrayNick/BLACK-MD-PLUGINS/main/media';
+const REMOTE_VIDEO_URLS = [`${RAW_BASE}/menu.mp4`, 'https://files.catbox.moe/yi3wkc.mp4'];
+const REMOTE_IMAGE_URLS = [`${RAW_BASE}/menu.jpg`, 'https://files.catbox.moe/t03s77.jpg'];
+const MENU_THUMB = `${RAW_BASE}/menu.jpg`;
+
+const remoteCache = {}; // downloaded once, reused for every .menu until restart
 
 const GEN_IMAGE = path.join(MEDIA_DIR, 'menu-generated.jpg');
 const GEN_VIDEO = path.join(MEDIA_DIR, 'menu-generated.mp4');
@@ -99,13 +121,26 @@ async function getMenuMedia(type) {
   const isVideo = type === 'video';
 
   // 1. Files you placed in /media
-  const custom = isVideo ? ['menu.mp4'] : ['menu.jpg', 'menu.jpeg', 'menu.png'];
-  for (const name of custom) {
-    const p = path.join(MEDIA_DIR, name);
-    if (fs.existsSync(p)) return fs.readFileSync(p);
+  const customPath = findCustomMedia(isVideo);
+  if (customPath) {
+    console.log(`[menu] using your ${isVideo ? 'video' : 'image'}: ${customPath}`);
+    return fs.readFileSync(customPath);
+  }
+  console.log(`[menu] your ${isVideo ? 'menu.mp4' : 'menu.jpg'} was not found in: ${MEDIA_DIRS.join(' | ')}`);
+
+  // 2. Download from your GitHub repo (then catbox), cached in memory
+  if (remoteCache[type]) return remoteCache[type];
+  const urls = isVideo ? REMOTE_VIDEO_URLS : REMOTE_IMAGE_URLS;
+  for (let i = 0; i < urls.length; i++) {
+    const buf = await getBuffer(urls[i], i === 0 ? 30000 : 10000);
+    if (buf) {
+      console.log(`[menu] using ${isVideo ? 'video' : 'image'} from ${urls[i]}`);
+      remoteCache[type] = buf;
+      return buf;
+    }
   }
 
-  // 2. Generated locally
+  // 3. Generated locally (last resort)
   try {
     fs.mkdirSync(MEDIA_DIR, { recursive: true });
     if (!generating) {
@@ -122,9 +157,7 @@ async function getMenuMedia(type) {
   } catch (e) {
     console.error('[menu] local media generation failed:', e.message);
   }
-
-  // 3. Remote URL
-  return await getBuffer(isVideo ? MENU_VIDEO_URL : MENU_IMAGE_URL, isVideo ? 40000 : 25000);
+  return null;
 }
 
 module.exports = [

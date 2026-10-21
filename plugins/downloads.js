@@ -71,40 +71,95 @@ async function fetchTikTok(link) {
   return null;
 }
 
+// ─── Instagram ───────────────────────────────────────────────────────────
+
+// Strip tracking junk (?igsh=..., ?vrfl=..., #...) that makes scrapers fail
+function cleanInstagramUrl(link) {
+  try {
+    const u = new URL(link);
+    return `${u.origin}${u.pathname}`.replace(/\/?$/, '/');
+  } catch { return link; }
+}
+
+const igLooksVideo = (u) => /\.mp4(\?|$)|video/i.test(u) && !/\.(jpg|jpeg|png|webp)(\?|$)/i.test(u);
+const igMediaKey = (u) => { try { return new URL(u).pathname; } catch { return u; } };
+
+// Last-resort provider: Instagram's own public embed page (no third party)
+async function scrapeInstagramEmbed(clean) {
+  const mm = clean.match(/instagram\.com\/(?:[^\/]+\/)?(p|reel|reels|tv)\/([A-Za-z0-9_-]+)/i);
+  if (!mm) throw new Error('no shortcode in link');
+  const kind = mm[1].toLowerCase() === 'reels' ? 'reel' : mm[1].toLowerCase();
+  const res = await axios.get(`https://www.instagram.com/${kind}/${mm[2]}/embed/captioned/`, {
+    timeout: 20000,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9'
+    }
+  });
+  const html = String(res.data);
+  const unescape = (s) => s.replace(/\\+u0026/g, '&').replace(/\\+\//g, '/').replace(/&amp;/g, '&');
+  const vid = html.match(/video_url\\*"\s*:\s*\\*"(.+?)\\*"/);
+  if (vid) return [{ url: unescape(vid[1]), isVideo: true }];
+  const img = html.match(/class="EmbeddedMediaImage"[^>]*src="([^"]+)"/);
+  if (img) return [{ url: unescape(img[1]), isVideo: false }];
+  throw new Error('nothing found in embed page');
+}
+
 // Instagram: returns array of { url, isVideo } or []
-async function fetchInstagram(link) {
-  const enc = encodeURIComponent(link);
-  const toItems = (urls) => urls.map(u => ({ url: u, isVideo: /\.mp4|video/i.test(u) && !/\.(jpg|jpeg|png|webp)(\?|$)/i.test(u) }));
+async function fetchInstagram(link, api) {
+  const clean = cleanInstagramUrl(link);
+  const enc = encodeURIComponent(clean);
+  const isReel = /\/(reel|reels|tv)\//i.test(clean);
 
-  // Provider 1: ruhend-scraper (already used by .insta2)
-  try {
+  // Generic API provider: pulls media links out of whatever JSON shape comes back
+  const fromApi = (url, ok) => async () => {
+    const d = await getJson(url, 25000);
+    if (ok && !ok(d)) throw new Error('unsuccessful response');
+    const urls = [...new Set(collectMedia(d))].filter(u => !/^https?:\/\/(www\.)?instagram\.com\//i.test(u));
+    if (!urls.length) throw new Error('no media in response');
+    return urls.map(u => ({ url: u, isVideo: igLooksVideo(u) }));
+  };
+
+  const providers = [];
+
+  // ruhend-scraper (same one .insta2 uses)
+  providers.push(async () => {
     const { igdl } = require('ruhend-scraper');
-    const d = await igdl(link);
-    if (d?.data?.length) {
-      const items = d.data.filter(x => x?.url).map(x => ({ url: x.url, isVideo: x.type ? x.type === 'video' : /\.mp4/i.test(x.url) }));
-      if (items.length) return items;
-    }
-  } catch (_) {}
+    const d = await igdl(clean);
+    const items = (d?.data || []).filter(x => x?.url).map(x => ({ url: x.url, isVideo: x.type ? x.type === 'video' : igLooksVideo(x.url) }));
+    if (!items.length) throw new Error('no media');
+    return items;
+  });
 
-  // Provider 2: bk9
-  try {
-    const d = await getJson(`https://api.bk9.dev/download/instagram?url=${enc}`);
-    if (d?.status && d.BK9) {
-      const urls = [...new Set(collectMedia(d.BK9))];
-      if (urls.length) return toItems(urls);
+  // The bot's own API base (the one that already serves your YouTube/FB/Pinterest commands)
+  if (api) {
+    for (const ep of ['download/instagram', 'download/instadl', 'download/igdl']) {
+      providers.push(fromApi(`${api}/${ep}?url=${enc}`));
     }
-  } catch (_) {}
+  }
 
-  // Provider 3: bk9 alt endpoint
-  try {
-    const d = await getJson(`https://api.bk9.dev/download/instagram2?url=${enc}`);
-    if (d?.status && d.BK9) {
-      const urls = [...new Set(collectMedia(d.BK9))];
-      if (urls.length) return toItems(urls);
-    }
-  } catch (_) {}
+  providers.push(fromApi(`https://api.bk9.dev/download/instagram?url=${enc}`, d => d?.status && d.BK9));
+  providers.push(fromApi(`https://api.bk9.dev/download/instagram2?url=${enc}`, d => d?.status && d.BK9));
+  providers.push(fromApi(`https://api.siputzx.my.id/api/d/igdl?url=${enc}`));
+  providers.push(fromApi(`https://api.vreden.my.id/api/igdl?url=${enc}`));
+  providers.push(() => scrapeInstagramEmbed(clean));
 
-  return [];
+  // Run all at once; first one that returns real media wins
+  const attempts = providers.map((p, i) => p()
+    .then(items => {
+      if (isReel && !items.some(x => x.isVideo)) throw new Error('only a thumbnail returned for a reel');
+      return items;
+    })
+    .catch(e => { console.error(`[ig] source ${i + 1}/${providers.length} failed: ${e.message}`); throw e; }));
+
+  let items;
+  try { items = await Promise.any(attempts); } catch { return []; }
+
+  // Remove duplicates; reels/IGTV are a single video
+  const seen = new Set();
+  items = items.filter(x => { const k = igMediaKey(x.url); if (seen.has(k)) return false; seen.add(k); return true; });
+  if (isReel) return [items.find(x => x.isVideo)];
+  return items;
 }
 
 module.exports = [
@@ -485,33 +540,33 @@ module.exports = [
   aliases: ['igdl', 'instagram', 'ig'],
   description: 'Download Instagram photo/video/reel',
   category: 'downloads',
-  handler: async (client, m, { text }) => {
+  handler: async (client, m, { text, api }) => {
     if (!text) return m.reply('📌 Provide an Instagram link.\nExample: .ig https://www.instagram.com/p/xxxxx');
     if (!text.includes('instagram.com')) return m.reply('❌ That is not a valid Instagram link.');
     try {
       await m.reply('⏳ Please wait, fetching your media...');
       await client.sendMessage(m.chat, { react: { text: '📥', key: m.key } });
 
-      const items = await fetchInstagram(text.trim().split(/\s+/)[0]);
-      if (!items.length) return m.reply('❌ Failed to fetch Instagram media. Make sure the link is valid and the post is public, or try *.insta2*.');
+      const link = text.trim().split(/\s+/).find(w => /instagram\.com/i.test(w)) || text.trim();
+      const items = await fetchInstagram(link, api);
+      if (!items.length) return m.reply('❌ Failed to fetch Instagram media. Make sure the post is public and the link is correct, then try again in a minute.');
 
+      const caption = '📸 *Instagram*\n_Downloaded by BLACK-MD_';
       for (const { url, isVideo } of items.slice(0, 10)) {
-        if (isVideo) {
-          await client.sendMessage(m.chat, {
-            video: { url },
-            mimetype: 'video/mp4',
-            caption: '📸 *Instagram*\n_Downloaded by BLACK-MD_',
-            gifPlayback: false,
-          }, { quoted: m });
-        } else {
-          await client.sendMessage(m.chat, {
-            image: { url },
-            caption: '📸 *Instagram*\n_Downloaded by BLACK-MD_',
-          }, { quoted: m });
+        const content = (src) => isVideo
+          ? { video: src, mimetype: 'video/mp4', caption, gifPlayback: false }
+          : { image: src, caption };
+        try {
+          await client.sendMessage(m.chat, content({ url }), { quoted: m });
+        } catch (_) {
+          // Instagram CDN links often refuse WhatsApp's direct fetch: download it ourselves
+          const dl = await axios.get(url, { responseType: 'arraybuffer', timeout: 90000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+          await client.sendMessage(m.chat, content(Buffer.from(dl.data)), { quoted: m });
         }
       }
 
     } catch (err) {
+      console.error('[ig] send failed:', err.message);
       m.reply('❌ Error downloading Instagram media.');
     }
   }

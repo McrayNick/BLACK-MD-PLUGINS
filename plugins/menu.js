@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const fetch = require('node-fetch');
 const handler = require('../lib/handler');
 const { runtime } = require('../lib/ravenfunc');
@@ -18,8 +20,28 @@ function formatCmd(name) {
   return toBold(name.charAt(0).toUpperCase() + name.slice(1));
 }
 
-// Download media into a Buffer (more reliable than letting WhatsApp fetch the URL).
-// Returns null if the host is down/blocked so the menu can still be sent as text.
+// ─── Menu media ──────────────────────────────────────────────────────────
+// Order of preference (no external hosting needed):
+//   1. Your own files in <repo>/media/  ->  menu.jpg (or .png)  and  menu.mp4
+//   2. Auto-generated banner image / short video (made with jimp + ffmpeg-static)
+//   3. Remote URLs below (last resort)
+
+const MEDIA_DIR = path.join(__dirname, '..', 'media');
+const MENU_VIDEO_URL = 'https://files.catbox.moe/yi3wkc.mp4';
+const MENU_IMAGE_URL = 'https://files.catbox.moe/t03s77.jpg';
+const MENU_THUMB = 'https://files.catbox.moe/hzlqe0.jpg';
+
+const GEN_IMAGE = path.join(MEDIA_DIR, 'menu-generated.jpg');
+const GEN_VIDEO = path.join(MEDIA_DIR, 'menu-generated.mp4');
+
+function withTimeout(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms); })
+  ]).finally(() => clearTimeout(timer));
+}
+
 async function getBuffer(url, timeout = 25000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -40,9 +62,70 @@ async function getBuffer(url, timeout = 25000) {
   }
 }
 
-const MENU_VIDEO = 'https://files.catbox.moe/yi3wkc.mp4';
-const MENU_IMAGE = 'https://files.catbox.moe/t03s77.jpg';
-const MENU_THUMB = 'https://files.catbox.moe/hzlqe0.jpg';
+async function generateBanner(outPath) {
+  const Jimp = require('jimp');
+  const W = 1280, H = 720;
+  const img = new Jimp(W, H, 0x0b0f1aff);
+  img.scan(0, 0, W, H, function (x, y, idx) {
+    const t = y / H;
+    this.bitmap.data[idx] = Math.round(11 + 30 * t);
+    this.bitmap.data[idx + 1] = Math.round(15 + 10 * t);
+    this.bitmap.data[idx + 2] = Math.round(26 + 80 * t);
+    this.bitmap.data[idx + 3] = 255;
+  });
+  const big = await Jimp.loadFont(Jimp.FONT_SANS_128_WHITE);
+  const small = await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE);
+  img.print(big, 0, H / 2 - 150, { text: 'BLACK-MD', alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER, alignmentY: Jimp.VERTICAL_ALIGN_MIDDLE }, W, 200);
+  img.print(small, 0, H / 2 + 70, { text: 'WhatsApp Multi-Device Bot', alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER, alignmentY: Jimp.VERTICAL_ALIGN_MIDDLE }, W, 50);
+  await img.quality(90).writeAsync(outPath);
+}
+
+function generateVideo(imagePath, outPath) {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = require('fluent-ffmpeg');
+    try { ffmpeg.setFfmpegPath(require('ffmpeg-static')); } catch {}
+    ffmpeg(imagePath)
+      .inputOptions(['-loop 1'])
+      .outputOptions(['-t 4', '-r 24', '-pix_fmt yuv420p', '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2', '-c:v libx264', '-movflags +faststart', '-an'])
+      .on('end', resolve)
+      .on('error', reject)
+      .save(outPath);
+  });
+}
+
+let generating = null; // avoid generating twice if two people send .menu at once
+
+async function getMenuMedia(type) {
+  const isVideo = type === 'video';
+
+  // 1. Files you placed in /media
+  const custom = isVideo ? ['menu.mp4'] : ['menu.jpg', 'menu.jpeg', 'menu.png'];
+  for (const name of custom) {
+    const p = path.join(MEDIA_DIR, name);
+    if (fs.existsSync(p)) return fs.readFileSync(p);
+  }
+
+  // 2. Generated locally
+  try {
+    fs.mkdirSync(MEDIA_DIR, { recursive: true });
+    if (!generating) {
+      generating = (async () => {
+        if (!fs.existsSync(GEN_IMAGE)) await generateBanner(GEN_IMAGE);
+        if (!fs.existsSync(GEN_VIDEO)) {
+          try { await generateVideo(GEN_IMAGE, GEN_VIDEO); } catch (e) { console.error('[menu] video generation failed:', e.message); }
+        }
+      })().finally(() => { generating = null; });
+    }
+    await generating;
+    const p = isVideo ? GEN_VIDEO : GEN_IMAGE;
+    if (fs.existsSync(p)) return fs.readFileSync(p);
+  } catch (e) {
+    console.error('[menu] local media generation failed:', e.message);
+  }
+
+  // 3. Remote URL
+  return await getBuffer(isVideo ? MENU_VIDEO_URL : MENU_IMAGE_URL, isVideo ? 40000 : 25000);
+}
 
 module.exports = [
 
@@ -53,8 +136,6 @@ module.exports = [
     handler: async (client, m, { prefix, mode, menutype, pushname, Rspeed }) => {
 
       const byCategory = {};
-      const fs = require('fs');
-      const path = require('path');
       const pluginsDir = path.join(__dirname);
       const files = fs.readdirSync(pluginsDir).filter(f => f.endsWith('.js') && f !== 'menu.js');
       for (const file of files) {
@@ -128,9 +209,6 @@ module.exports = [
       menu += `𝗠𝗮𝗱𝗲 𝗼𝗻 𝗲𝗮𝗿𝘁𝗵 𝗯𝘆 𝗛𝘂𝗺𝗮𝗻𝘀🔥!\n`;
       menu += `━━━━━━━━━━━━━━━━━━━━`;
 
-      // WhatsApp limits media captions (far shorter than this menu), so for
-      // image/video modes we send the media with a short caption and then
-      // send the full menu as a normal text message right after it.
       const shortCaption =
         `☆ 𝐁𝐋𝐀𝐂𝐊-𝐌𝐃 ☆\n\n` +
         `👤 *User:* ${pushname}\n` +
@@ -143,38 +221,37 @@ module.exports = [
       try {
         if (menutype === 'video' || menutype === 'image') {
           const isVideo = menutype === 'video';
-          // Try the URL directly first (fast, same as the original behaviour);
-          // if that fails, download it ourselves and retry from a buffer.
-          const makeContent = (src, caption) => isVideo
-            ? { video: src, mimetype: 'video/mp4', caption, gifPlayback: true }
-            : { image: src, caption };
-          const mediaUrl = isVideo ? MENU_VIDEO : MENU_IMAGE;
+          const makeContent = (buffer, caption) => isVideo
+            ? { video: buffer, mimetype: 'video/mp4', caption, gifPlayback: true }
+            : { image: buffer, caption };
 
           let sent = false;
+          let buffer = null;
           try {
-            await client.sendMessage(m.chat, makeContent({ url: mediaUrl }, menu), { quoted: m });
-            sent = true;
+            buffer = await withTimeout(getMenuMedia(menutype), 60000, 'menu media');
           } catch (e) {
-            console.error(`[menu] direct ${menutype} send failed: ${e.message}`);
+            console.error(`[menu] could not prepare ${menutype}: ${e.message}`);
           }
 
-          if (!sent) {
-            const buffer = await getBuffer(mediaUrl, isVideo ? 40000 : 25000);
-            if (buffer) {
+          if (buffer) {
+            try {
+              // Single message: media + full menu as caption
+              await withTimeout(client.sendMessage(m.chat, makeContent(buffer, menu), { quoted: m }), 60000, `${menutype} send`);
+              sent = true;
+            } catch (e) {
+              console.error(`[menu] ${menutype} send failed: ${e.message}`);
               try {
-                await client.sendMessage(m.chat, makeContent(buffer, menu), { quoted: m });
-                sent = true;
-              } catch (e) {
-                console.error(`[menu] buffer ${menutype} send failed: ${e.message}`);
-                // Caption may be too long: media with short caption, then full menu as text
-                await client.sendMessage(m.chat, makeContent(buffer, shortCaption), { quoted: m });
+                // Caption may have been rejected: media with short caption + full menu as text
+                await withTimeout(client.sendMessage(m.chat, makeContent(buffer, shortCaption), { quoted: m }), 60000, `${menutype} short send`);
                 await sendText();
                 sent = true;
+              } catch (e2) {
+                console.error(`[menu] ${menutype} short send failed: ${e2.message}`);
               }
             }
           }
 
-          // Media host down: never leave the user without a menu
+          // Never leave the user without a menu
           if (!sent) await sendText();
 
         } else if (menutype === 'link') {
@@ -194,12 +271,10 @@ module.exports = [
           }, { quoted: m });
 
         } else {
-          // 'text' or any unknown value
           await sendText();
         }
       } catch (err) {
         console.error('[menu] send failed:', err);
-        // Last resort so the user always gets a menu
         try { await sendText(); } catch (e) { console.error('[menu] text fallback failed:', e); }
       }
     }

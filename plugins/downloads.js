@@ -4,6 +4,109 @@ const axios = global.axios || require('axios');
 const fetch = require('node-fetch');
 const yts = require('yt-search');
 
+// ─── Shared helpers (multi-provider fallbacks) ───────────────────────────
+
+// Walk any API response and pull out media URLs, so a change in the
+// provider's JSON shape doesn't silently break the command.
+function collectMedia(node, out = []) {
+  if (!node) return out;
+  if (typeof node === 'string') {
+    if (/^https?:\/\//i.test(node)) out.push(node);
+    return out;
+  }
+  if (Array.isArray(node)) { node.forEach(n => collectMedia(n, out)); return out; }
+  if (typeof node === 'object') {
+    for (const k of ['url', 'download_url', 'downloadUrl', 'video', 'hd', 'sd', 'image', 'play', 'hdplay', 'nowm', 'media']) {
+      if (node[k]) collectMedia(node[k], out);
+    }
+    for (const k of Object.keys(node)) {
+      if (typeof node[k] === 'object') collectMedia(node[k], out);
+    }
+  }
+  return out;
+}
+
+async function getJson(url, timeout = 30000) {
+  const res = await axios.get(url, {
+    timeout,
+    headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36' }
+  });
+  return res.data;
+}
+
+// TikTok: returns { videoUrl, images[], title } or null
+async function fetchTikTok(link) {
+  const enc = encodeURIComponent(link);
+
+  // Provider 1: tikwm (most stable, no key)
+  try {
+    const d = await getJson(`https://www.tikwm.com/api/?url=${enc}&hd=1`);
+    if (d?.code === 0 && d.data) {
+      const base = (u) => (u && u.startsWith('http') ? u : u ? `https://www.tikwm.com${u}` : null);
+      return {
+        videoUrl: base(d.data.hdplay || d.data.play),
+        images: Array.isArray(d.data.images) ? d.data.images : [],
+        title: d.data.title || ''
+      };
+    }
+  } catch (_) {}
+
+  // Provider 2: bk9
+  try {
+    const d = await getJson(`https://api.bk9.dev/download/tiktok?url=${enc}`);
+    if (d?.status && d.BK9) {
+      const urls = collectMedia(d.BK9).filter(u => /\.(mp4)|video|tikcdn|tiktokcdn|play/i.test(u));
+      const any = urls[0] || collectMedia(d.BK9)[0];
+      if (any) return { videoUrl: any, images: [], title: d.BK9.title || '' };
+    }
+  } catch (_) {}
+
+  // Provider 3: ruhend-scraper (if installed)
+  try {
+    const { ttdl } = require('ruhend-scraper');
+    const d = await ttdl(link);
+    if (d?.video) return { videoUrl: d.video, images: [], title: d.title || '' };
+  } catch (_) {}
+
+  return null;
+}
+
+// Instagram: returns array of { url, isVideo } or []
+async function fetchInstagram(link) {
+  const enc = encodeURIComponent(link);
+  const toItems = (urls) => urls.map(u => ({ url: u, isVideo: /\.mp4|video/i.test(u) && !/\.(jpg|jpeg|png|webp)(\?|$)/i.test(u) }));
+
+  // Provider 1: ruhend-scraper (already used by .insta2)
+  try {
+    const { igdl } = require('ruhend-scraper');
+    const d = await igdl(link);
+    if (d?.data?.length) {
+      const items = d.data.filter(x => x?.url).map(x => ({ url: x.url, isVideo: x.type ? x.type === 'video' : /\.mp4/i.test(x.url) }));
+      if (items.length) return items;
+    }
+  } catch (_) {}
+
+  // Provider 2: bk9
+  try {
+    const d = await getJson(`https://api.bk9.dev/download/instagram?url=${enc}`);
+    if (d?.status && d.BK9) {
+      const urls = [...new Set(collectMedia(d.BK9))];
+      if (urls.length) return toItems(urls);
+    }
+  } catch (_) {}
+
+  // Provider 3: bk9 alt endpoint
+  try {
+    const d = await getJson(`https://api.bk9.dev/download/instagram2?url=${enc}`);
+    if (d?.status && d.BK9) {
+      const urls = [...new Set(collectMedia(d.BK9))];
+      if (urls.length) return toItems(urls);
+    }
+  } catch (_) {}
+
+  return [];
+}
+
 module.exports = [
 
   // ═══════════════════════════════════════════════════════════
@@ -389,18 +492,10 @@ module.exports = [
       await m.reply('⏳ Please wait, fetching your media...');
       await client.sendMessage(m.chat, { react: { text: '📥', key: m.key } });
 
-      const response = await fetch(`https://api.bk9.dev/download/instagram?url=${encodeURIComponent(text)}`);
-      const data = await response.json();
+      const items = await fetchInstagram(text.trim().split(/\s+/)[0]);
+      if (!items.length) return m.reply('❌ Failed to fetch Instagram media. Make sure the link is valid and the post is public, or try *.insta2*.');
 
-      if (!data.status || !data.BK9 || typeof data.BK9 === 'string') return m.reply('❌ Failed to fetch Instagram media. Make sure the link is valid and the post is public.');
-
-      const items = Array.isArray(data.BK9) ? data.BK9 : [data.BK9];
-      if (items.length === 0) return m.reply('❌ No media found at that link.');
-
-      for (const item of items) {
-        const url = item?.url || item?.video || item?.image || (typeof item === 'string' ? item : null);
-        if (!url) continue;
-        const isVideo = item?.type === 'video' || url.includes('.mp4');
+      for (const { url, isVideo } of items.slice(0, 10)) {
         if (isVideo) {
           await client.sendMessage(m.chat, {
             video: { url },
@@ -512,31 +607,45 @@ module.exports = [
   
   {
     command: ['tikdl'],
-    aliases: ['tiktok', 'tdl', 'tt'],
+    aliases: ['tiktok', 'tt'],
     description: 'Download TikTok video',
     category: 'downloads',
     handler: async (client, m, { reply, text }) => {
       if (!text) return reply('Please provide a TikTok video link.');
-      if (!text.includes('tiktok.com')) return reply('That is not a TikTok link.');
-      await client.sendMessage(m.chat, { react: { text: '✅️', key: m.key } });
+      if (!/tiktok\.com/i.test(text)) return reply('That is not a TikTok link.');
+      await client.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
       try {
-        const response = await axios.get(`https://api.bk9.dev/download/tiktok?url=${encodeURIComponent(text)}`);
-        if (response.data.status && response.data.BK9) {
-          const { BK9: videoUrl } = response.data.BK9;
-          await client.sendMessage(m.chat, { text: 'Data fetched successfully✅ wait a moment. . .' }, { quoted: m });
-          await client.sendMessage(m.chat, { video: { url: videoUrl }, caption: '𝗗𝗢𝗪𝗡𝗟𝗢𝗔𝗗𝗘𝗗 𝗕𝗬 𝗕𝗟𝗔𝗖𝗞-𝗠𝗗', gifPlayback: false }, { quoted: m });
-        } else {
-          reply('Failed to retrieve video from the provided link.');
+        const link = text.trim().split(/\s+/)[0];
+        const data = await fetchTikTok(link);
+        if (!data || (!data.videoUrl && !data.images.length)) {
+          return reply('❌ Failed to retrieve the video. The link may be private/removed, or all download servers are busy. Try again shortly.');
         }
+
+        const caption = `🎵 *TikTok*${data.title ? `\n${data.title}` : ''}\n_Downloaded by BLACK-MD_`;
+
+        if (data.videoUrl) {
+          try {
+            await client.sendMessage(m.chat, { video: { url: data.videoUrl }, mimetype: 'video/mp4', caption, gifPlayback: false }, { quoted: m });
+          } catch (_) {
+            // Some CDNs reject direct URL fetch from WhatsApp - fall back to buffer
+            const dl = await axios.get(data.videoUrl, { responseType: 'arraybuffer', timeout: 90000, headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://www.tiktok.com/' } });
+            await client.sendMessage(m.chat, { video: Buffer.from(dl.data), mimetype: 'video/mp4', caption, gifPlayback: false }, { quoted: m });
+          }
+        } else {
+          for (const img of data.images.slice(0, 10)) {
+            await client.sendMessage(m.chat, { image: { url: img }, caption }, { quoted: m });
+          }
+        }
+        await client.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
       } catch (e) {
-        reply(`An error occurred during download: ${e.message}`);
+        reply(`❌ An error occurred during download: ${e.message}`);
       }
     }
   },
   
 {
   command: ['twitter'],
-  aliases: ['xdl', 'tdl'],
+  aliases: ['xdl'],
   description: 'Download Twitter/X video or image',
   category: 'downloads',
   handler: async (client, m, { text }) => {

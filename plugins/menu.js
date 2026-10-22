@@ -228,17 +228,17 @@ module.exports = [
 
       const line = '━━━━━━━━━━━━━━━━━━━━';
       let menu = `╭${line}╮\n`;
-      menu += `┃  ⚡ ${toBold('BLACK-MD')} ${toBold('BOT')} ⚡\n`;
-      menu += `┃  ${toBoldItalic('Next-gen WhatsApp assistant')}\n`;
+      menu += `┃  ✨ ${toBold('BLACK-MD')} ${toBold('BOT')} ✨\n`;
+      menu += `┃  🤖 ${toBoldItalic('Next-gen WhatsApp assistant')}\n`;
       menu += `╰${line}╯\n\n`;
 
-      menu += `┏━━『 ${toBold('SYSTEM')} 』\n`;
-      menu += `┃ ◈ ${toBold('User')}  ⟫  ${pushname}\n`;
-      menu += `┃ ◈ ${toBold('Mode')}  ⟫  ${mode.toUpperCase()}\n`;
-      menu += `┃ ◈ ${toBold('Speed')}  ⟫  ${Rspeed.toFixed(4)} ms\n`;
-      menu += `┃ ◈ ${toBold('Prefix')}  ⟫  [ ${prefix} ]\n`;
-      menu += `┃ ◈ ${toBold('Uptime')}  ⟫  ${runtime(process.uptime())}\n`;
-      menu += `┃ ◈ ${toBold('Commands')}  ⟫  ${totalCommands}\n`;
+      menu += `┏━━『 🛰 ${toBold('SYSTEM')} 』\n`;
+      menu += `┃ 👤 ${toBold('User')}  ⟫  ${pushname}\n`;
+      menu += `┃ 🪩 ${toBold('Mode')}  ⟫  ${mode.toUpperCase()}\n`;
+      menu += `┃ ⚡ ${toBold('Speed')}  ⟫  ${Rspeed.toFixed(4)} ms\n`;
+      menu += `┃ 🔑 ${toBold('Prefix')}  ⟫  [ ${prefix} ]\n`;
+      menu += `┃ ⏳ ${toBold('Uptime')}  ⟫  ${runtime(process.uptime())}\n`;
+      menu += `┃ 📦 ${toBold('Commands')}  ⟫  ${totalCommands}\n`;
       menu += `┗━━━━━━━━━━━━━━━━◈\n\n`;
 
       for (const [cat, plugins] of Object.entries(byCategory)) {
@@ -252,16 +252,15 @@ module.exports = [
         menu += `╰─────────────────◈\n\n`;
       }
       menu += `${line}\n`;
-      menu += `💠 ${toBoldItalic('Type')} ${prefix}${toBold('menu')} ${toBoldItalic('anytime to return here')} 💠\n`;
       menu += `𝗠𝗮𝗱𝗲 𝗼𝗻 𝗲𝗮𝗿𝘁𝗵 𝗯𝘆 𝗛𝘂𝗺𝗮𝗻𝘀🔥!\n`;
       menu += `${line}`;
 
       const shortCaption =
-        `⚡ ${toBold('BLACK-MD')} ${toBold('BOT')} ⚡\n\n` +
-        `◈ ${toBold('User')}  ⟫  ${pushname}\n` +
-        `◈ ${toBold('Mode')}  ⟫  ${mode.toUpperCase()}\n` +
-        `◈ ${toBold('Prefix')}  ⟫  [ ${prefix} ]\n` +
-        `◈ ${toBold('Commands')}  ⟫  ${totalCommands}`;
+        `✨ ${toBold('BLACK-MD')} ${toBold('BOT')} ✨\n\n` +
+        `👤 ${toBold('User')}  ⟫  ${pushname}\n` +
+        `🪩 ${toBold('Mode')}  ⟫  ${mode.toUpperCase()}\n` +
+        `🔑 ${toBold('Prefix')}  ⟫  [ ${prefix} ]\n` +
+        `📦 ${toBold('Commands')}  ⟫  ${totalCommands}`;
 
       const sendText = () => client.sendMessage(m.chat, { text: menu }, { quoted: m });
 

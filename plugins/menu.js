@@ -15,6 +15,14 @@ function toBold(str) {
     return c;
   }).join('');
 }
+function toBoldItalic(str) {
+  return str.split('').map(c => {
+    const code = c.charCodeAt(0);
+    if (code >= 65 && code <= 90) return String.fromCodePoint(0x1D63C + code - 65);
+    if (code >= 97 && code <= 122) return String.fromCodePoint(0x1D656 + code - 97);
+    return c;
+  }).join('');
+}
 function formatCmd(name) {
   if (!name) return '';
   return toBold(name.charAt(0).toUpperCase() + name.slice(1));
@@ -51,6 +59,7 @@ const REMOTE_VIDEO_URLS = [`${RAW_BASE}/menu.mp4`, 'https://files.catbox.moe/yi3
 const REMOTE_IMAGE_URLS = [`${RAW_BASE}/menu.jpg`, 'https://files.catbox.moe/t03s77.jpg'];
 const MENU_THUMB = `${RAW_BASE}/menu.jpg`;
 
+const MENU_VERSION = 'r6-github-media';
 const remoteCache = {}; // downloaded once, reused for every .menu until restart
 
 const GEN_IMAGE = path.join(MEDIA_DIR, 'menu-generated.jpg');
@@ -217,37 +226,42 @@ module.exports = [
         misc:      '✠',
       };
 
-      let menu = `╔═════════════════╗\n`;
-      menu += `║    ☆  𝐁𝐋𝐀𝐂𝐊-𝐌𝐃  ☆ \n`;
-      menu += `╚═════════════════╝\n\n`;
-      menu += `👤 *User:* ${pushname}\n`;
-      menu += `🪩 *Mode:* ${mode.toUpperCase()}\n`;
-      menu += `⚡️ *Speed:* ${Rspeed.toFixed(4)} Ms\n`;
-      menu += `🔑 *Prefix:* ${prefix}\n`;
-      menu += `📦 *Total Commands:* ${totalCommands}\n`;
-      menu += `═══════════════════\n\n`;
+      const line = '━━━━━━━━━━━━━━━━━━━━';
+      let menu = `╭${line}╮\n`;
+      menu += `┃  ⚡ ${toBold('BLACK-MD')} ${toBold('BOT')} ⚡\n`;
+      menu += `┃  ${toBoldItalic('Next-gen WhatsApp assistant')}\n`;
+      menu += `╰${line}╯\n\n`;
+
+      menu += `┏━━『 ${toBold('SYSTEM')} 』\n`;
+      menu += `┃ ◈ ${toBold('User')}  ⟫  ${pushname}\n`;
+      menu += `┃ ◈ ${toBold('Mode')}  ⟫  ${mode.toUpperCase()}\n`;
+      menu += `┃ ◈ ${toBold('Speed')}  ⟫  ${Rspeed.toFixed(4)} ms\n`;
+      menu += `┃ ◈ ${toBold('Prefix')}  ⟫  [ ${prefix} ]\n`;
+      menu += `┃ ◈ ${toBold('Uptime')}  ⟫  ${runtime(process.uptime())}\n`;
+      menu += `┃ ◈ ${toBold('Commands')}  ⟫  ${totalCommands}\n`;
+      menu += `┗━━━━━━━━━━━━━━━━◈\n\n`;
 
       for (const [cat, plugins] of Object.entries(byCategory)) {
         const icon = categoryIcons[cat] || '📌';
         const symbol = categorySymbols[cat] || '✠';
-        menu += `> ${icon}  *${toBold(cat.toUpperCase())}*\n`;
-        menu += `╔══════════════════╗\n`;
-        for (const p of plugins) {
-          menu += `║${symbol}┃ ${formatCmd(p.commands[0])}\n`;
+        const names = plugins.map(p => p.commands[0]).filter(Boolean);
+        menu += `╭─❮ ${icon} ${toBoldItalic(cat.toUpperCase())} ❯─⟦ ${names.length} ⟧\n`;
+        for (const n of names) {
+          menu += `│ ${symbol} ${formatCmd(n)}\n`;
         }
-        menu += `╚══════════════════╝\n`;
-        menu += '\n';
+        menu += `╰─────────────────◈\n\n`;
       }
-      menu += `━━━━━━━━━━━━━━━━━━━━\n`;
+      menu += `${line}\n`;
+      menu += `💠 ${toBoldItalic('Type')} ${prefix}${toBold('menu')} ${toBoldItalic('anytime to return here')} 💠\n`;
       menu += `𝗠𝗮𝗱𝗲 𝗼𝗻 𝗲𝗮𝗿𝘁𝗵 𝗯𝘆 𝗛𝘂𝗺𝗮𝗻𝘀🔥!\n`;
-      menu += `━━━━━━━━━━━━━━━━━━━━`;
+      menu += `${line}`;
 
       const shortCaption =
-        `☆ 𝐁𝐋𝐀𝐂𝐊-𝐌𝐃 ☆\n\n` +
-        `👤 *User:* ${pushname}\n` +
-        `🪩 *Mode:* ${mode.toUpperCase()}\n` +
-        `🔑 *Prefix:* ${prefix}\n` +
-        `📦 *Total Commands:* ${totalCommands}`;
+        `⚡ ${toBold('BLACK-MD')} ${toBold('BOT')} ⚡\n\n` +
+        `◈ ${toBold('User')}  ⟫  ${pushname}\n` +
+        `◈ ${toBold('Mode')}  ⟫  ${mode.toUpperCase()}\n` +
+        `◈ ${toBold('Prefix')}  ⟫  [ ${prefix} ]\n` +
+        `◈ ${toBold('Commands')}  ⟫  ${totalCommands}`;
 
       const sendText = () => client.sendMessage(m.chat, { text: menu }, { quoted: m });
 
@@ -310,6 +324,49 @@ module.exports = [
         console.error('[menu] send failed:', err);
         try { await sendText(); } catch (e) { console.error('[menu] text fallback failed:', e); }
       }
+    }
+  },
+
+  {
+    command: ['menudebug'],
+    description: 'Check menu media setup',
+    category: 'menu',
+    handler: async (client, m, { reply }) => {
+      const say = (t) => (typeof reply === 'function' ? reply(t) : m.reply(t));
+      const lines = [
+        `*menu.js version:* ${MENU_VERSION}`,
+        `*__dirname:* ${__dirname}`,
+        `*cwd:* ${process.cwd()}`,
+        ''
+      ];
+
+      for (const dir of MEDIA_DIRS) {
+        let info;
+        try { info = fs.readdirSync(dir).join(', ') || '(empty)'; } catch { info = 'folder not found'; }
+        lines.push(`📁 ${dir}\n   ${info}`);
+      }
+
+      lines.push('');
+      lines.push(`🖼 image (local): ${findCustomMedia(false) || 'none'}`);
+      lines.push(`🎬 video (local): ${findCustomMedia(true) || 'none'}`);
+      lines.push('');
+
+      for (const url of [...REMOTE_IMAGE_URLS, ...REMOTE_VIDEO_URLS]) {
+        let status;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15000);
+        try {
+          const r = await fetch(url, { method: 'HEAD', signal: controller.signal });
+          status = `HTTP ${r.status}, ${r.headers.get('content-length') || '?'} bytes`;
+        } catch (e) {
+          status = `ERROR: ${e.message}`;
+        } finally {
+          clearTimeout(timer);
+        }
+        lines.push(`🌐 ${url}\n   ${status}`);
+      }
+
+      await say(lines.join('\n'));
     }
   },
 

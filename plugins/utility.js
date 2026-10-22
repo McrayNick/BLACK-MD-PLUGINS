@@ -413,7 +413,7 @@ module.exports = [
             `   ↳ ${u.name || 'Blackie254'} => https://github.com/Blackie254\n` +
             `   ↳ McrayNick  => https://github.com/McrayNick\n\n` +
             `🔶 𝐖𝐡𝐚𝐭𝐬𝐀𝐩𝐩 𝐏𝐚𝐢𝐫𝐢𝐧𝐠:\n` +
-            `   ↳ https://blackmd-pairing.onrender.com\n` +
+            `   ↳ https://pair.blueblizzards.site\n` +
             `   ★ Save your Session-ID!\n\n` +
             `⚙️ 𝐑𝐞𝐪𝐮𝐢𝐫𝐞𝐦𝐞𝐧𝐭𝐬:\n` +
             `   ✓ Complete all variables\n` +

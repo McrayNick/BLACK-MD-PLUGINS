@@ -121,9 +121,11 @@ async function fetchInstagram(link, api) {
   };
 
   const providers = [];
+  const names = [];
+  const add = (name, fn) => { names.push(name); providers.push(fn); };
 
   // ruhend-scraper (same one .insta2 uses)
-  providers.push(async () => {
+  add('ruhend', async () => {
     const { igdl } = require('ruhend-scraper');
     const d = await igdl(clean);
     const items = (d?.data || []).filter(x => x?.url).map(x => ({ url: x.url, isVideo: x.type ? x.type === 'video' : igLooksVideo(x.url) }));
@@ -134,23 +136,29 @@ async function fetchInstagram(link, api) {
   // The bot's own API base (the one that already serves your YouTube/FB/Pinterest commands)
   if (api) {
     for (const ep of ['download/instagramdl', 'download/instagram', 'download/instadl', 'download/igdl']) {
-      providers.push(fromApi(`${api}/${ep}?url=${enc}`));
+      add(`api/${ep.split('/')[1]}`, fromApi(`${api}/${ep}?url=${enc}`));
     }
   }
 
-  providers.push(fromApi(`https://api.bk9.dev/download/instagram?url=${enc}`, d => d?.status && d.BK9));
-  providers.push(fromApi(`https://api.bk9.dev/download/instagram2?url=${enc}`, d => d?.status && d.BK9));
-  providers.push(fromApi(`https://api.siputzx.my.id/api/d/igdl?url=${enc}`));
-  providers.push(fromApi(`https://api.vreden.my.id/api/igdl?url=${enc}`));
-  providers.push(() => scrapeInstagramEmbed(clean));
+  add('bk9-1', fromApi(`https://api.bk9.dev/download/instagram?url=${enc}`, d => d?.status && d.BK9));
+  add('bk9-2', fromApi(`https://api.bk9.dev/download/instagram2?url=${enc}`, d => d?.status && d.BK9));
+  add('siputzx', fromApi(`https://api.siputzx.my.id/api/d/igdl?url=${enc}`));
+  add('vreden', fromApi(`https://api.vreden.my.id/api/igdl?url=${enc}`));
+  add('embed', () => scrapeInstagramEmbed(clean));
 
   // Run all at once; first one that returns real media wins
+  fetchInstagram.lastErrors = [];
   const attempts = providers.map((p, i) => p()
     .then(items => {
       if (isReel && !items.some(x => x.isVideo)) throw new Error('only a thumbnail returned for a reel');
       return items;
     })
-    .catch(e => { console.error(`[ig] source ${i + 1}/${providers.length} failed: ${e.message}`); throw e; }));
+    .catch(e => {
+      const why = e?.response?.status ? `HTTP ${e.response.status}` : (e?.code || e?.message || 'error');
+      console.error(`[ig] ${names[i]} failed: ${why}`);
+      fetchInstagram.lastErrors.push(`${names[i]}: ${String(why).slice(0, 60)}`);
+      throw e;
+    }));
 
   let items;
   try { items = await Promise.any(attempts); } catch { return []; }
@@ -549,7 +557,10 @@ module.exports = [
 
       const link = text.trim().split(/\s+/).find(w => /instagram\.com/i.test(w)) || text.trim();
       const items = await fetchInstagram(link, api);
-      if (!items.length) return m.reply('❌ Failed to fetch Instagram media. Make sure the post is public and the link is correct, then try again in a minute.');
+      if (!items.length) {
+        const why = (fetchInstagram.lastErrors || []).join('\n');
+        return m.reply('❌ Failed to fetch Instagram media. Make sure the post is public and the link is correct, then try again in a minute.' + (why ? `\n\n🔎 Sources tried:\n${why}` : ''));
+      }
 
       const caption = '📸 *Instagram*\n_Downloaded by BLACK-MD_';
       for (const { url, isVideo } of items.slice(0, 10)) {

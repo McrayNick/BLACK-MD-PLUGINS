@@ -112,11 +112,14 @@ async function fetchInstagram(link, api) {
   const isReel = /\/(reel|reels|tv)\//i.test(clean);
 
   // Generic API provider: pulls media links out of whatever JSON shape comes back
-  const fromApi = (url, ok) => async () => {
-    const d = await getJson(url, 25000);
+  const fromApi = (url, ok, timeout = 25000) => async () => {
+    const d = await getJson(url, timeout);
     if (ok && !ok(d)) throw new Error('unsuccessful response');
     const urls = [...new Set(collectMedia(d))].filter(u => !/^https?:\/\/(www\.)?instagram\.com\//i.test(u));
-    if (!urls.length) throw new Error('no media in response');
+    if (!urls.length) {
+      let peek = ''; try { peek = JSON.stringify(d).replace(/https?:\/\/\S+?(?=["\\])/g, 'URL').slice(0, 70); } catch {}
+      throw new Error(`no media in response ${peek}`);
+    }
     return urls.map(u => ({ url: u, isVideo: igLooksVideo(u) }));
   };
 
@@ -135,15 +138,12 @@ async function fetchInstagram(link, api) {
 
   // The bot's own API base (the one that already serves your YouTube/FB/Pinterest commands)
   if (api) {
-    for (const ep of ['download/instagramdl', 'download/instagram', 'download/instadl', 'download/igdl']) {
-      add(`api/${ep.split('/')[1]}`, fromApi(`${api}/${ep}?url=${enc}`));
-    }
+    add('api/instagramdl', fromApi(`${api}/download/instagramdl?url=${enc}`, null, 100000));
+    add('api/instadl', fromApi(`${api}/download/instadl?url=${enc}`, null, 60000));
   }
 
   add('bk9-1', fromApi(`https://api.bk9.dev/download/instagram?url=${enc}`, d => d?.status && d.BK9));
   add('bk9-2', fromApi(`https://api.bk9.dev/download/instagram2?url=${enc}`, d => d?.status && d.BK9));
-  add('siputzx', fromApi(`https://api.siputzx.my.id/api/d/igdl?url=${enc}`));
-  add('vreden', fromApi(`https://api.vreden.my.id/api/igdl?url=${enc}`));
   add('embed', () => scrapeInstagramEmbed(clean));
 
   // Run all at once; first one that returns real media wins

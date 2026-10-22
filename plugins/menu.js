@@ -229,7 +229,7 @@ module.exports = [
       const line = '━━━━━━━━━━━━━━━━━━━━';
       let menu = `╭${line}╮\n`;
       menu += `┃  ✨ ${toBold('BLACK-MD')} ${toBold('BOT')} ✨\n`;
-      menu += `┃  🤖 ${toBoldItalic('Next-gen WhatsApp assistant')}\n`;
+      menu += `┃   ${toBoldItalic('Next-gen WhatsApp assistant')}\n`;
       menu += `╰${line}╯\n\n`;
 
       menu += `┏━━『 🛰 ${toBold('SYSTEM')} 』\n`;

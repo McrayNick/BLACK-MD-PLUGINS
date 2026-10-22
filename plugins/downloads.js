@@ -16,7 +16,7 @@ function collectMedia(node, out = []) {
   }
   if (Array.isArray(node)) { node.forEach(n => collectMedia(n, out)); return out; }
   if (typeof node === 'object') {
-    for (const k of ['url', 'download_url', 'downloadUrl', 'video', 'hd', 'sd', 'image', 'play', 'hdplay', 'nowm', 'media']) {
+    for (const k of ['url', 'download_url', 'downloadUrl', 'video', 'hd', 'sd', 'image', 'play', 'hdplay', 'nowm', 'media', 'result', 'download', 'link']) {
       if (node[k]) collectMedia(node[k], out);
     }
     for (const k of Object.keys(node)) {
@@ -133,7 +133,7 @@ async function fetchInstagram(link, api) {
 
   // The bot's own API base (the one that already serves your YouTube/FB/Pinterest commands)
   if (api) {
-    for (const ep of ['download/instagram', 'download/instadl', 'download/igdl']) {
+    for (const ep of ['download/instagramdl', 'download/instagram', 'download/instadl', 'download/igdl']) {
       providers.push(fromApi(`${api}/${ep}?url=${enc}`));
     }
   }

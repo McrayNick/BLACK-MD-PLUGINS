@@ -172,50 +172,91 @@ async function fetchInstagram(link, api) {
 
 // ─── YouTube audio (multi-source, verified) ──────────────────────────────
 
-// A real song is megabytes of audio. Reject error pages, JSON and tiny stub files.
-function checkAudio(buf) {
-  if (!buf || buf.length < 150 * 1024) throw new Error(`file too small (${Math.round((buf ? buf.length : 0) / 1024)} KB)`);
-  const head = buf.slice(0, 12);
+const IMG_EXT = /\.(jpe?g|png|webp|gif|svg)(\?|$)/i;
+
+// Work out what a downloaded file really is
+function sniff(buf) {
+  const head = buf.slice(0, 16);
   const txt = head.toString('latin1');
-  if (txt[0] === '<' || txt[0] === '{') throw new Error('got a web page/JSON, not audio');
-  if (txt.startsWith('ID3') || (head[0] === 0xFF && (head[1] & 0xE0) === 0xE0)) return { mimetype: 'audio/mpeg', ext: 'mp3' };
-  if (txt.slice(4, 8) === 'ftyp') return { mimetype: 'audio/mp4', ext: 'm4a' };
-  if (txt.startsWith('OggS')) return { mimetype: 'audio/ogg; codecs=opus', ext: 'ogg' };
-  if (txt.startsWith('RIFF') || txt.startsWith('fLaC')) return { mimetype: 'audio/mpeg', ext: 'mp3' };
-  throw new Error('unrecognised file type');
+  if (txt.trimStart()[0] === '<') return { kind: 'html' };
+  if (txt.trimStart()[0] === '{' || txt.trimStart()[0] === '[') return { kind: 'json' };
+  if (txt.startsWith('ID3') || (head[0] === 0xFF && (head[1] & 0xE0) === 0xE0)) return { kind: 'audio', mimetype: 'audio/mpeg', ext: 'mp3' };
+  if (txt.slice(4, 8) === 'ftyp') return { kind: 'audio', mimetype: 'audio/mp4', ext: 'm4a' };
+  if (txt.startsWith('OggS')) return { kind: 'audio', mimetype: 'audio/ogg; codecs=opus', ext: 'ogg' };
+  if (txt.startsWith('RIFF') || txt.startsWith('fLaC')) return { kind: 'audio', mimetype: 'audio/mpeg', ext: 'mp3' };
+  return { kind: 'unknown' };
 }
+
+// A real song is megabytes of audio. Reject error pages, JSON and tiny stub files.
+// The error text says exactly what was received so it can be diagnosed from chat.
+function checkAudio(buf, contentType = '') {
+  const kb = Math.round((buf ? buf.length : 0) / 1024);
+  const ct = String(contentType).split(';')[0] || '?';
+  if (!buf || !buf.length) throw new Error('empty file');
+  const info = sniff(buf);
+  if (info.kind === 'html' || info.kind === 'json') {
+    const peek = buf.slice(0, 70).toString('utf8').replace(/\s+/g, ' ').replace(/https?:\/\/\S+/g, 'URL');
+    throw new Error(`${kb}KB ${info.kind}, not audio: ${peek}`);
+  }
+  if (info.kind === 'unknown') throw new Error(`${kb}KB unknown type (${ct})`);
+  if (buf.length < 150 * 1024) {
+    const e = new Error(`${kb}KB audio stub (${ct}) - too short`);
+    e.small = true;
+    throw e;
+  }
+  return { mimetype: info.mimetype, ext: info.ext };
+}
+
+const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
 // Returns { buffer, mimetype, ext, title, source } or null (reasons in fetchYtAudio.lastErrors)
 async function fetchYtAudio(videoUrl, api) {
   const enc = encodeURIComponent(videoUrl);
   const names = [];
   const jobs = [];
-  const add = (name, url, timeout) => { names.push(name); jobs.push({ url, timeout }); };
+  const add = (name, url, timeout = 60000) => { names.push(name); jobs.push({ url, timeout }); };
 
-  if (api) {
-    add('api/audio', `${api}/download/audio?url=${enc}`, 90000);
-    add('api/ytmp3', `${api}/download/ytmp3?url=${enc}`, 90000);
-  }
-  add('xcasper', `https://apis.xcasper.space/api/downloader/ytmp3?url=${enc}`, 60000);
-  add('gifted', `https://mcow.giftedtechnexus.workers.dev/api/yta?url=${enc}`, 60000);
+  if (api) add('api/audio', `${api}/download/audio?url=${enc}`, 90000);
+  add('xcasper', `https://apis.xcasper.space/api/downloader/ytmp3?url=${enc}`, 90000);
+  add('gifted', `https://mcow.giftedtechnexus.workers.dev/api/yta?url=${enc}`);
+  add('giftedtech', `https://api.giftedtech.co.ke/api/download/ytmp3?apikey=gifted&url=${enc}`);
+  add('nekolabs', `https://api.nekolabs.web.id/downloader/youtube/v1?url=${enc}&format=mp3`);
+  add('ryzumi', `https://api.ryzumi.vip/api/downloader/ytmp3?url=${enc}`);
+  add('agatz', `https://api.agatz.xyz/api/ytmp3?url=${enc}`);
+  add('siputzx', `https://api.siputzx.my.id/api/d/ytmp3?url=${enc}`);
+
+  const download = async (u) => axios.get(u, {
+    responseType: 'arraybuffer', timeout: 120000, maxContentLength: 100 * 1024 * 1024,
+    headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36', Accept: '*/*' }
+  });
 
   fetchYtAudio.lastErrors = [];
   const attempts = jobs.map(async (job, i) => {
     try {
       const d = await getJson(job.url, job.timeout);
-      const urls = [...new Set(collectMedia(d))].filter(u => !/youtube\.com|youtu\.be|ytimg\.com/i.test(u));
-      if (!urls.length) throw new Error('no link in reply');
-      const dl = await axios.get(urls[0], {
-        responseType: 'arraybuffer', timeout: 120000, maxContentLength: 100 * 1024 * 1024,
-        headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36' }
-      });
-      const buffer = Buffer.from(dl.data);
-      const kind = checkAudio(buffer);
+      let urls = [...new Set(collectMedia(d))].filter(u => !/youtube\.com|youtu\.be|ytimg\.com/i.test(u) && !IMG_EXT.test(u));
+      urls.sort((x, y) => (/mp3|audio|download|dl|\.m4a/i.test(y) ? 1 : 0) - (/mp3|audio|download|dl|\.m4a/i.test(x) ? 1 : 0));
+      if (!urls.length) {
+        let peek = ''; try { peek = JSON.stringify(d).replace(/https?:\/\/\S+?(?=["\\])/g, 'URL').slice(0, 50); } catch {}
+        throw new Error(`no link in reply ${peek}`);
+      }
+      let res = await download(urls[0]);
+      let buffer = Buffer.from(res.data);
+      let kind;
+      try { kind = checkAudio(buffer, res.headers?.['content-type']); }
+      catch (e) {
+        if (!e.small) throw e;
+        // maybe the server is still converting: wait and try the same link once more
+        await wait(6000);
+        res = await download(urls[0]);
+        buffer = Buffer.from(res.data);
+        kind = checkAudio(buffer, res.headers?.['content-type']);
+      }
       return { buffer, ...kind, title: d?.title || d?.result?.title || d?.data?.title || null, source: names[i] };
     } catch (e) {
       const why = e?.response?.status ? `HTTP ${e.response.status}` : (e?.code || e?.message || 'error');
       console.error(`[yta] ${names[i]} failed: ${why}`);
-      fetchYtAudio.lastErrors.push(`${names[i]}: ${String(why).slice(0, 60)}`);
+      fetchYtAudio.lastErrors.push(`${names[i]}: ${String(why).slice(0, 95)}`);
       throw e;
     }
   });

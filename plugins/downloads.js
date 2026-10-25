@@ -3,6 +3,10 @@
 const axios = global.axios || require('axios');
 const fetch = require('node-fetch');
 const yts = require('yt-search');
+const _fs = require('fs');
+const _os = require('os');
+const _path = require('path');
+const { spawn: _spawn, execFileSync: _execFileSync } = require('child_process');
 
 // ─── Shared helpers (multi-provider fallbacks) ───────────────────────────
 
@@ -170,6 +174,216 @@ async function fetchInstagram(link, api) {
   return items;
 }
 
+// ─── YouTube audio (multi-source, verified) ──────────────────────────────
+
+const IMG_EXT = /\.(jpe?g|png|webp|gif|svg)(\?|$)/i;
+const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+// Work out what a downloaded file really is
+function sniff(buf) {
+  const head = buf.slice(0, 16);
+  const txt = head.toString('latin1');
+  if (txt.trimStart()[0] === '<') return { kind: 'html' };
+  if (txt.trimStart()[0] === '{' || txt.trimStart()[0] === '[') return { kind: 'json' };
+  if (txt.startsWith('ID3') || (head[0] === 0xFF && (head[1] & 0xE0) === 0xE0)) return { kind: 'audio', mimetype: 'audio/mpeg', ext: 'mp3' };
+  if (txt.slice(4, 8) === 'ftyp') return { kind: 'audio', mimetype: 'audio/mp4', ext: 'm4a' };
+  if (txt.startsWith('OggS')) return { kind: 'audio', mimetype: 'audio/ogg; codecs=opus', ext: 'ogg' };
+  if (txt.startsWith('RIFF') || txt.startsWith('fLaC')) return { kind: 'audio', mimetype: 'audio/mpeg', ext: 'mp3' };
+  return { kind: 'unknown' };
+}
+
+// A real song is megabytes of audio. Reject error pages, JSON and tiny stub files.
+// The error text says exactly what was received so it can be diagnosed from chat.
+function checkAudio(buf, contentType = '') {
+  const kb = Math.round((buf ? buf.length : 0) / 1024);
+  const ct = String(contentType).split(';')[0] || '?';
+  if (!buf || !buf.length) throw new Error('empty file');
+  const info = sniff(buf);
+  if (info.kind === 'html') {
+    const body = buf.slice(0, 20000).toString('utf8');
+    const title = (body.match(/<title[^>]*>([^<]{1,60})/i) || [])[1];
+    throw new Error(`${kb}KB web page, not audio${title ? ` ("${title.trim()}")` : ''}`);
+  }
+  if (info.kind === 'json') {
+    const peek = buf.slice(0, 60).toString('utf8').replace(/\s+/g, ' ').replace(/https?:\/\/\S+/g, 'URL');
+    throw new Error(`${kb}KB json, not audio: ${peek}`);
+  }
+  if (info.kind === 'unknown') throw new Error(`${kb}KB unknown type (${ct})`);
+  if (buf.length < 150 * 1024) {
+    const e = new Error(`${kb}KB audio stub (${ct}) - too short`);
+    e.small = true;
+    throw e;
+  }
+  return { mimetype: info.mimetype, ext: info.ext };
+}
+
+// ── yt-dlp: runs on the bot's own server, no third-party API needed ──────
+const YTDLP_URLS = {
+  'linux-x64': 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux',
+  'linux-arm64': 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64'
+};
+let ytdlpBin = null;
+let ytdlpFailedAt = 0;
+let ytdlpInstalling = null;
+
+function ytdlpWorks(bin) {
+  try { _execFileSync(bin, ['--version'], { timeout: 20000, stdio: 'pipe' }); return true; } catch { return false; }
+}
+
+async function ensureYtDlp() {
+  if (ytdlpBin) return ytdlpBin;
+  if (Date.now() - ytdlpFailedAt < 30 * 60 * 1000) throw new Error('yt-dlp unavailable (tried recently)');
+  if (!ytdlpInstalling) {
+    ytdlpInstalling = (async () => {
+      const candidates = [process.env.YTDLP_PATH, 'yt-dlp', _path.join(_os.tmpdir(), 'yt-dlp_bin')].filter(Boolean);
+      for (const c of candidates) if (ytdlpWorks(c)) return c;
+      const url = YTDLP_URLS[`${process.platform}-${process.arch}`];
+      if (!url) throw new Error(`yt-dlp not installed (${process.platform}-${process.arch})`);
+      const dest = _path.join(_os.tmpdir(), 'yt-dlp_bin');
+      const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 180000, maxContentLength: 120 * 1024 * 1024 });
+      _fs.writeFileSync(dest, Buffer.from(res.data), { mode: 0o755 });
+      if (!ytdlpWorks(dest)) throw new Error('downloaded yt-dlp will not run here');
+      return dest;
+    })().finally(() => { ytdlpInstalling = null; });
+  }
+  try { ytdlpBin = await ytdlpInstalling; return ytdlpBin; }
+  catch (e) { ytdlpFailedAt = Date.now(); throw e; }
+}
+
+function runYtDlp(bin, watchUrl) {
+  return new Promise((resolve, reject) => {
+    const MAX = 60 * 1024 * 1024;
+    const child = _spawn(bin, ['-f', 'bestaudio[ext=m4a]/bestaudio', '--no-playlist', '--no-warnings', '--no-progress', '--max-filesize', '60M', '-o', '-', watchUrl], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const chunks = []; let size = 0; let err = '';
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('yt-dlp timed out')); }, 150000);
+    child.stdout.on('data', d => { size += d.length; if (size > MAX) { child.kill('SIGKILL'); } else chunks.push(d); });
+    child.stderr.on('data', d => { err = (err + d.toString()).slice(-400); });
+    child.on('error', e => { clearTimeout(timer); reject(e); });
+    child.on('close', code => {
+      clearTimeout(timer);
+      if (code === 0 && size <= MAX) return resolve(Buffer.concat(chunks));
+      const line = err.split('\n').map(x => x.trim()).filter(Boolean).pop() || `exit ${code}`;
+      reject(new Error(line.replace(/^ERROR:\s*(\[[^\]]+\]\s*)?/i, '').slice(0, 90)));
+    });
+  });
+}
+
+// ── RapidAPI "youtube-mp36": set RAPIDAPI_KEY to enable ───────────────────
+async function rapidApiLink(videoId) {
+  for (let i = 0; i < 6; i++) {
+    const res = await axios.get(`https://youtube-mp36.p.rapidapi.com/dl?id=${videoId}`, {
+      timeout: 30000,
+      headers: { 'x-rapidapi-key': process.env.RAPIDAPI_KEY, 'x-rapidapi-host': 'youtube-mp36.p.rapidapi.com' }
+    });
+    const d = res.data;
+    if (d?.status === 'ok' && d.link) return { url: d.link, title: d.title || null };
+    if (d?.status === 'processing') { await wait(3000); continue; }
+    throw new Error(`rapidapi: ${String(d?.msg || d?.status || 'no link').slice(0, 60)}`);
+  }
+  throw new Error('rapidapi: still processing');
+}
+
+// Returns { buffer, mimetype, ext, title, source } or null (reasons in fetchYtAudio.lastErrors)
+async function fetchYtAudio(videoUrl, api) {
+  const enc = encodeURIComponent(videoUrl);
+  const videoId = (String(videoUrl).match(/(?:youtu\.be\/|[?&]v=|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})/) || [])[1];
+  const names = [];
+  const jobs = [];
+  // each job returns a link ({url,title}) or a ready Buffer ({buffer})
+  const add = (name, fn) => { names.push(name); jobs.push(fn); };
+  const viaApi = (url, timeout = 60000) => async () => {
+    const d = await getJson(url, timeout);
+    let urls = [...new Set(collectMedia(d))].filter(u => !/youtube\.com|youtu\.be|ytimg\.com/i.test(u) && !IMG_EXT.test(u));
+    urls.sort((x, y) => (/mp3|audio|download|dl|\.m4a/i.test(y) ? 1 : 0) - (/mp3|audio|download|dl|\.m4a/i.test(x) ? 1 : 0));
+    if (!urls.length) {
+      let peek = ''; try { peek = JSON.stringify(d).replace(/https?:\/\/\S+?(?=["\\])/g, 'URL').slice(0, 50); } catch {}
+      throw new Error(`no link in reply ${peek}`);
+    }
+    return { url: urls[0], title: d?.title || d?.result?.title || d?.data?.title || null };
+  };
+
+  if (videoId) add('yt-dlp', async () => ({ buffer: await runYtDlp(await ensureYtDlp(), `https://www.youtube.com/watch?v=${videoId}`) }));
+  if (videoId && process.env.RAPIDAPI_KEY) add('rapidapi', () => rapidApiLink(videoId));
+  if (api) add('api/audio', viaApi(`${api}/download/audio?url=${enc}`, 90000));
+  add('xcasper', viaApi(`https://apis.xcasper.space/api/downloader/ytmp3?url=${enc}`, 90000));
+  add('gifted', viaApi(`https://mcow.giftedtechnexus.workers.dev/api/yta?url=${enc}`));
+
+  const download = async (u) => axios.get(u, {
+    responseType: 'arraybuffer', timeout: 120000, maxContentLength: 100 * 1024 * 1024,
+    headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36', Accept: '*/*' }
+  });
+
+  fetchYtAudio.lastErrors = [];
+  const attempts = jobs.map(async (job, i) => {
+    try {
+      const got = await job();
+      if (got.buffer) return { buffer: got.buffer, ...checkAudio(got.buffer, 'audio'), title: null, source: names[i] };
+      let res = await download(got.url);
+      let buffer = Buffer.from(res.data);
+      let kind;
+      try { kind = checkAudio(buffer, res.headers?.['content-type']); }
+      catch (e) {
+        if (!e.small) throw e;
+        // maybe the server is still converting: wait and try the same link once more
+        await wait(6000);
+        res = await download(got.url);
+        buffer = Buffer.from(res.data);
+        kind = checkAudio(buffer, res.headers?.['content-type']);
+      }
+      return { buffer, ...kind, title: got.title, source: names[i] };
+    } catch (e) {
+      const why = e?.response?.status ? `HTTP ${e.response.status}` : (e?.code || e?.message || 'error');
+      console.error(`[yta] ${names[i]} failed: ${why}`);
+      fetchYtAudio.lastErrors.push(`${names[i]}: ${String(why).slice(0, 95)}`);
+      throw e;
+    }
+  });
+  try { return await Promise.any(attempts); } catch { return null; }
+}
+
+// ─── YouTube video (multi-source) ────────────────────────────────────────
+
+// Returns { url, title } from the first source that gives a real video link.
+// Reasons for every failure are kept in fetchYtVideo.lastErrors (shown to the user).
+async function fetchYtVideo(videoUrl, api) {
+  const enc = encodeURIComponent(videoUrl);
+  const names = [];
+  const jobs = [];
+  const add = (name, fn) => { names.push(name); jobs.push(fn); };
+
+  const pick = (d) => {
+    const urls = [...new Set(collectMedia(d))].filter(u => !/youtube\.com|youtu\.be|ytimg\.com/i.test(u));
+    const vid = urls.find(u => /\.mp4|video|googlevideo|download/i.test(u)) || urls[0];
+    if (!vid) {
+      let peek = ''; try { peek = JSON.stringify(d).replace(/https?:\/\/\S+?(?=["\\])/g, 'URL').slice(0, 60); } catch {}
+      throw new Error(`no link in reply ${peek}`);
+    }
+    return { url: vid, title: d?.title || d?.result?.title || d?.data?.title || d?.BK9?.title || null };
+  };
+  const src = (url, timeout, ok) => async () => {
+    const d = await getJson(url, timeout);
+    if (ok && !ok(d)) throw new Error('unsuccessful reply');
+    return pick(d);
+  };
+
+  if (api) {
+    add('api/mp4', src(`${api}/download/mp4?url=${enc}`, 90000));
+    add('api/ytmp4', src(`${api}/download/ytmp4?url=${enc}`, 90000));
+  }
+  add('gifted', src(`https://mcow.giftedtechnexus.workers.dev/api/ytv?url=${enc}`, 60000));
+  add('xcasper', src(`https://apis.xcasper.space/api/downloader/ytmp4?url=${enc}`, 60000));
+  add('supreme', src(`https://apissupreme.vercel.app/media/ytmp4?apikey=supreme&url=${enc}`, 60000, d => d?.status));
+
+  fetchYtVideo.lastErrors = [];
+  const attempts = jobs.map((j, i) => j().catch(e => {
+    const why = e?.response?.status ? `HTTP ${e.response.status}` : (e?.code || e?.message || 'error');
+    console.error(`[ytv] ${names[i]} failed: ${why}`);
+    fetchYtVideo.lastErrors.push(`${names[i]}: ${String(why).slice(0, 60)}`);
+    throw e;
+  }));
+  try { return await Promise.any(attempts); } catch { return null; }
+}
+
 module.exports = [
 
   // ═══════════════════════════════════════════════════════════
@@ -230,13 +444,15 @@ module.exports = [
         await client.sendMessage(m.chat, { text: `😍 Found: *${videoTitle}*`, edit: msg.key });
         await client.sendMessage(m.chat, { text: `✅ Downloading: *${videoTitle}*`, edit: msg.key });
 
-        let download = await axios.get(`${api}/download/audio?url=${encodeURIComponent(videoUrl)}`);
-        let downloadUrl = download.data?.result;
-        if (!downloadUrl) return client.sendMessage(m.chat, { text: '❌ Failed to get audio.', edit: msg.key });
+        const song = await fetchYtAudio(videoUrl, api);
+        if (!song) {
+          const why = (fetchYtAudio.lastErrors || []).join('\n');
+          return client.sendMessage(m.chat, { text: '❌ Failed to get audio. Try again in a minute.' + (why ? `\n\n🔎 Sources tried:\n${why}` : ''), edit: msg.key });
+        }
 
-        let fileName = `${videoTitle}.mp3`.replace(/[^\w\s.-]/gi, '');
-        await client.sendMessage(m.chat, { audio: { url: downloadUrl }, mimetype: 'audio/mpeg', fileName }, { quoted: m });
-        await client.sendMessage(m.chat, { document: { url: downloadUrl }, mimetype: 'audio/mpeg', fileName }, { quoted: m });
+        let fileName = `${videoTitle}`.replace(/[^\w\s.-]/gi, '') + '.' + song.ext;
+        await client.sendMessage(m.chat, { audio: song.buffer, mimetype: song.mimetype, fileName }, { quoted: m });
+        await client.sendMessage(m.chat, { document: song.buffer, mimetype: song.mimetype, fileName }, { quoted: m });
         await client.sendMessage(m.chat, { text: `✅ Succesfully Downloaded *${videoTitle}*`, edit: msg.key });
       } catch (err) {
         m.reply('❌ Error downloading audio.');
@@ -249,7 +465,7 @@ module.exports = [
     aliases: ['yta2'],
     description: 'Download YouTube audio via alternate API',
     category: 'downloads',
-    handler: async (client, m, { text }) => {
+    handler: async (client, m, { text, api }) => {
       if (!text) return m.reply('🎧 Provide a song name or YouTube link!\nEg:- *play2 Blinding Lights*');
       try {
         await client.sendMessage(m.chat, { react: { text: '🎵', key: m.key } });
@@ -269,21 +485,17 @@ module.exports = [
 
         await client.sendMessage(m.chat, { text: `😍 Found: *${videoTitle}*\n⏳ Downloading...`, edit: msg.key });
 
-        const apiRes = await axios.get(
-          `https://mcow.giftedtechnexus.workers.dev/api/yta?url=${encodeURIComponent(videoUrl)}`,
-          { timeout: 60000 }
-        );
-        const data = apiRes.data;
-        if (!data.success || !data.result?.download_url) {
-          return client.sendMessage(m.chat, { text: '❌ Download failed. Try a different song.', edit: msg.key });
+        const song = await fetchYtAudio(videoUrl, api);
+        if (!song) {
+          const why = (fetchYtAudio.lastErrors || []).join('\n');
+          return client.sendMessage(m.chat, { text: '❌ Download failed. Try a different song.' + (why ? `\n\n🔎 Sources tried:\n${why}` : ''), edit: msg.key });
         }
 
-        const finalTitle = data.result.title || videoTitle;
-        const downloadUrl = data.result.download_url;
-        const fileName = finalTitle.replace(/[\/\\:*?"<>|]/g, '').trim() + '.mp3';
+        const finalTitle = song.title || videoTitle;
+        const fileName = finalTitle.replace(/[\/\\:*?"<>|]/g, '').trim() + '.' + song.ext;
 
-        await client.sendMessage(m.chat, { audio: { url: downloadUrl }, mimetype: 'audio/mpeg', fileName }, { quoted: m });
-        await client.sendMessage(m.chat, { document: { url: downloadUrl }, mimetype: 'audio/mpeg', caption: '*DOWNLOADED BY 𝐁𝐋𝐀𝐂𝐊-𝐌𝐃*', fileName }, { quoted: m });
+        await client.sendMessage(m.chat, { audio: song.buffer, mimetype: song.mimetype, fileName }, { quoted: m });
+        await client.sendMessage(m.chat, { document: song.buffer, mimetype: song.mimetype, caption: '*DOWNLOADED BY 𝐁𝐋𝐀𝐂𝐊-𝐌𝐃*', fileName }, { quoted: m });
         await client.sendMessage(m.chat, { text: `✅ Succesfully Downloaded! *${finalTitle}*`, edit: msg.key });
       } catch (err) {
         m.reply('❌ An error occurred. Try again.');
@@ -441,34 +653,15 @@ module.exports = [
         await client.sendMessage(m.chat, { text: `😍 Found: *${video.title}*\n⏱️ ${video.timestamp} | 🎤 ${video.author.name}`, edit: msg.key });
         await client.sendMessage(m.chat, { text: `⬇️ Downloading: *${video.title}*...`, edit: msg.key });
 
-        let downloadUrl = null;
-
-        // Primary api: raven
-        try {
-          const r1 = await axios.get(`${api}/download/audio?url=${encodeURIComponent(videoUrl)}`, { timeout: 30000 });
-          if (r1.data?.status && r1.data?.result) downloadUrl = r1.data.result;
-        } catch (_) {}
-
-        // Fallback 1: xcasper
-        if (!downloadUrl) {
-          try {
-            const r2 = await axios.get(`https://apis.xcasper.space/api/downloader/ytmp3?url=${encodeURIComponent(videoUrl)}`, { timeout: 30000 });
-            if (r2.data?.success && r2.data?.url) downloadUrl = r2.data.url;
-          } catch (_) {}
+        const song = await fetchYtAudio(videoUrl, api);
+        if (!song) {
+          const why = (fetchYtAudio.lastErrors || []).join('\n');
+          return client.sendMessage(m.chat, { text: '❌ Could not get a working song file. Try again later.' + (why ? `\n\n🔎 Sources tried:\n${why}` : ''), edit: msg.key });
         }
 
-        // Fallback 2: gifted
-        if (!downloadUrl) {
-          try {
-            const r3 = await axios.get(`https://mcow.giftedtechnexus.workers.dev/api/yta?url=${encodeURIComponent(videoUrl)}`, { timeout: 60000 });
-            if (r3.data?.success && r3.data?.result?.download_url) downloadUrl = r3.data.result.download_url;
-          } catch (_) {}
-        }
-
-        if (!downloadUrl) return client.sendMessage(m.chat, { text: '❌ Could not get a download link. All APIs failed. Try again later.', edit: msg.key });
-
-        await client.sendMessage(m.chat, { audio: { url: downloadUrl }, mimetype: 'audio/mpeg', fileName }, { quoted: m });
-        await client.sendMessage(m.chat, { document: { url: downloadUrl }, mimetype: 'audio/mpeg', fileName }, { quoted: m });
+        const outName = safeTitle + '.' + song.ext;
+        await client.sendMessage(m.chat, { audio: song.buffer, mimetype: song.mimetype, fileName: outName }, { quoted: m });
+        await client.sendMessage(m.chat, { document: song.buffer, mimetype: song.mimetype, fileName: outName }, { quoted: m });
         await client.sendMessage(m.chat, { text: `✅ Succesfully Downloaded! *${safeTitle}*`, edit: msg.key });
       } catch (err) {
         m.reply('❌ Failed to download. Try a different name or Spotify link.');
@@ -523,15 +716,14 @@ module.exports = [
 
         let videoUrl = videos[0].url;
         let videoTitle = videos[0].title;
-        let download = await axios.get(`${api}/download/audio?url=${encodeURIComponent(videoUrl)}`);
-        let downloadUrl = download.data?.result;
-        if (!downloadUrl) {
+        const song = await fetchYtAudio(videoUrl, api);
+        if (!song) {
           return client.sendMessage(m.chat, { text: txt.replace('⬇️ Downloading...', '❌ Download failed.'), edit: infoMsg.key });
         }
 
-        let fileName = `${title} - ${artistNames}.mp3`.replace(/[^\w\s.-]/gi, '');
-        await client.sendMessage(m.chat, { audio: { url: downloadUrl }, mimetype: 'audio/mpeg', fileName }, { quoted: m });
-        await client.sendMessage(m.chat, { document: { url: downloadUrl }, mimetype: 'audio/mpeg', fileName }, { quoted: m });
+        let fileName = `${title} - ${artistNames}`.replace(/[^\w\s.-]/gi, '') + '.' + song.ext;
+        await client.sendMessage(m.chat, { audio: song.buffer, mimetype: song.mimetype, fileName }, { quoted: m });
+        await client.sendMessage(m.chat, { document: song.buffer, mimetype: song.mimetype, fileName }, { quoted: m });
         await client.sendMessage(m.chat, { text: txt.replace('⬇️ Downloading...', `✅ Succesfully Downloaded *${videoTitle}*`), edit: infoMsg.key });
       } catch (err) {
         reply('❌ Something went wrong identifying or downloading the song.');

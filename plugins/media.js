@@ -65,9 +65,9 @@ module.exports = [
         );
       }
 
-      if (seconds > 10) {
+      if (seconds > 30) {
         return reply(
-          `Video too long (${seconds}s). Max is 10 seconds.`
+          `Video too long (${seconds}s). Max is 30 seconds.`
         );
       }
     }

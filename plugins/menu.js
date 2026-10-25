@@ -237,7 +237,6 @@ module.exports = [
       menu += `┃ 🪩 ${toBold('Mode')}  ⟫  ${mode.toUpperCase()}\n`;
       menu += `┃ ⚡ ${toBold('Speed')}  ⟫  ${Rspeed.toFixed(4)} ms\n`;
       menu += `┃ 🔑 ${toBold('Prefix')}  ⟫  [ ${prefix} ]\n`;
-      menu += `┃ ⏳ ${toBold('Uptime')}  ⟫  ${runtime(process.uptime())}\n`;
       menu += `┃ 📦 ${toBold('Commands')}  ⟫  ${totalCommands}\n`;
       menu += `┗━━━━━━━━━━━━━━━━◈\n\n`;
 

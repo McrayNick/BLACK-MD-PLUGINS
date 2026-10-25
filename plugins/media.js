@@ -20,7 +20,9 @@ module.exports = [
       msgR: quotedMsg,
       pushname: pushName,
       author,
-      reply
+      reply,
+      text: cmdText,
+      args: cmdArgs
     }
   ) => {
     const fs = require('fs');
@@ -134,7 +136,7 @@ module.exports = [
             {
               pack: pushName || 'Sticker',
               author: author || 'Bot',
-              type: StickerTypes.FULL,
+              type: StickerTypes.CROPPED,
               quality
             }
           );
@@ -192,42 +194,19 @@ module.exports = [
           );
         }
       } else {
-        // ── IMAGE: convert to webp using ffmpeg instead of sharp ──
-        const id = Date.now();
-        const tmpDir = os.tmpdir();
-        const inputPath = path.join(tmpDir, `stk_img_in_${id}`);
-        const outputPath = path.join(tmpDir, `stk_img_out_${id}.webp`);
+        // ── IMAGE: fill the square by default; ".s full" keeps the whole picture ──
+        const opt = String(cmdText || (Array.isArray(cmdArgs) ? cmdArgs.join(' ') : '') || '').toLowerCase();
+        const keepWhole = /\b(full|whole|fit|contain)\b/.test(opt);
 
-        fs.writeFileSync(inputPath, buffer);
+        const sticker = new Sticker(buffer, {
+          pack: pushName || 'Sticker',
+          author: author || 'Bot',
+          type: keepWhole ? StickerTypes.FULL : StickerTypes.CROPPED,
+          categories: ['🤩', '🎉'],
+          quality: 90
+        });
 
-        try {
-          execSync(
-            `"${ffmpegPath}" -y -i "${inputPath}" ` +
-              `-vf "scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000" ` +
-              `-vcodec libwebp -lossless 0 -compression_level 6 -q:v 85 -preset default "${outputPath}"`,
-            { timeout: 30000, stdio: 'pipe' }
-          );
-
-          if (!fs.existsSync(outputPath)) {
-            throw new Error('FFmpeg did not create webp output');
-          }
-
-          const webpBuffer = fs.readFileSync(outputPath);
-
-          const sticker = new Sticker(webpBuffer, {
-            pack: pushName || 'Sticker',
-            author: author || 'Bot',
-            type: StickerTypes.FULL,
-            categories: ['🤩', '🎉'],
-            quality: 85,
-            background: 'transparent'
-          });
-
-          stickerBuffer = await sticker.toBuffer();
-        } finally {
-          try { fs.unlinkSync(inputPath); } catch {}
-          try { fs.unlinkSync(outputPath); } catch {}
-        }
+        stickerBuffer = await sticker.toBuffer();
       }
 
       await client.sendMessage(
@@ -287,8 +266,7 @@ module.exports = [
           try {
             execSync(
               `"${ffmpegPath}" -y -i "${inputPath}" -t 6 ` +
-              `-vf "scale=512:512:force_original_aspect_ratio=decrease,fps=${fps},` +
-              `pad=512:512:(ow-iw)/2:(oh-ih)/2:color=black@0" ` +
+              `-vf "scale=512:512:force_original_aspect_ratio=increase,crop=512:512,fps=${fps}" ` +
               `-an -c:v libx264 -crf 28 -preset ultrafast "${processedPath}"`,
               { timeout: 30000, stdio: 'pipe' }
             );
@@ -298,7 +276,7 @@ module.exports = [
           const sticker = new Sticker(fs.readFileSync(processedPath), {
             pack: pushname,
             author: 'BLACK-MD',
-            type: StickerTypes.DEFAULT,
+            type: StickerTypes.CROPPED,
             quality: q,
           });
           const out = await sticker.toBuffer();
@@ -343,7 +321,7 @@ module.exports = [
         const sticker = new Sticker(fs.readFileSync(result), {
           pack: pushname,
           author: 'BLACK-MD',
-          type: StickerTypes.DEFAULT,
+          type: StickerTypes.CROPPED,
           categories: ['🤩', '🎉'],
           quality: 90,
         });

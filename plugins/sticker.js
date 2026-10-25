@@ -5,7 +5,7 @@ const path = require('path');
 const os = require('os');
 const { execSync, execFile } = require('child_process');
 const { promisify } = require('util');
-const { Sticker, StickerTypes } = require('wa-sticker-formatter');
+const { Sticker, StickerTypes, ffmpegBin } = require('../lib/stickerlite');
 const { packname, author } = require('../set.js');
 
 const execFileAsync = promisify(execFile);
@@ -20,11 +20,8 @@ const FFMPEG_CANDIDATES = [
   (() => { try { const b = require('ffmpeg-static'); return b && fs.existsSync(b) ? b : null; } catch { return null; } })()
 ];
 
-let cachedFfmpegPath = null;
 function resolveFfmpegPath() {
-  if (cachedFfmpegPath && cachedFfmpegPath !== 'ffmpeg' && fs.existsSync(cachedFfmpegPath)) return cachedFfmpegPath;
-  cachedFfmpegPath = FFMPEG_CANDIDATES.find(f => f && f !== 'ffmpeg' && fs.existsSync(f)) || 'ffmpeg';
-  return cachedFfmpegPath;
+  return ffmpegBin();
 }
 
 function configureStickerFfmpeg(binary) {

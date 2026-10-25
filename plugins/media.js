@@ -31,7 +31,7 @@ module.exports = [
     const {
       Sticker,
       StickerTypes
-    } = require('wa-sticker-formatter');
+    } = require('../lib/stickerlite');
 
     const ffmpegPath = require('ffmpeg-static');
     const from = m.chat;
@@ -248,7 +248,7 @@ module.exports = [
   description: 'Retake/rewatermark a sticker',
   category: 'media',
   handler: async (client, m, { reply, msgR }) => {
-    const { Sticker, StickerTypes } = require('wa-sticker-formatter');
+    const { Sticker, StickerTypes } = require('../lib/stickerlite');
     const Jimp = require('jimp');
     const fs = require('fs');
     const pushname = m.pushName || 'No Name';
@@ -340,31 +340,12 @@ module.exports = [
         }
 
       } else {
-        const sharp = require('sharp');
-        const os = require('os');
-        const path = require('path');
-        const stickerSize = 512;
-        let img;
-        try {
-          img = await Jimp.read(result);
-        } catch (e) {
-          const id = Date.now();
-          const pngPath = path.join(os.tmpdir(), `take_${id}.png`);
-          await sharp(result).png().toFile(pngPath);
-          img = await Jimp.read(pngPath);
-          try { fs.unlinkSync(pngPath); } catch {}
-        }
-        const padded = img.clone()
-          .contain(stickerSize, stickerSize)
-          .background(0x00000000);
-        const paddedBuffer = await padded.getBufferAsync(Jimp.MIME_PNG);
-        const sticker = new Sticker(paddedBuffer, {
+        const sticker = new Sticker(fs.readFileSync(result), {
           pack: pushname,
           author: 'BLACK-MD',
           type: StickerTypes.DEFAULT,
           categories: ['🤩', '🎉'],
-          quality: 100,
-          background: 'transparent',
+          quality: 90,
         });
         buf = await sticker.toBuffer();
       }
@@ -385,7 +366,7 @@ module.exports = [
     description: 'Mix two emojis into a sticker',
     category: 'media',
     handler: async (client, m, { reply, text }) => {
-      const { Sticker, StickerTypes } = require('wa-sticker-formatter');
+      const { Sticker, StickerTypes } = require('../lib/stickerlite');
       const { botname } = require('../set');
       if (!text) return m.reply('No emojis provided?');
       const emojis = text.split('+');
@@ -427,114 +408,50 @@ module.exports = [
     const atas = text.split('|')[0]?.trim() || '';
     const bawah = text.split('|')[1]?.trim() || '';
 
-    const sharp = require('sharp');
-    const { Sticker, StickerTypes } = require('wa-sticker-formatter');
+    const { Sticker, StickerTypes, toPng } = require('../lib/stickerlite');
     const fs = require('fs');
 
     let dwnld = await client.downloadAndSaveMediaMessage(qmsg);
 
     try {
-      let imgBuf;
+      let img;
       try {
-        imgBuf = await sharp(dwnld).png().toBuffer();
+        const pngBuf = await toPng(fs.readFileSync(dwnld));
+        img = await Jimp.read(pngBuf);
       } catch (e) {
         return reply('❌ Could not read the image: ' + e.message);
       }
 
-      const meta = await sharp(imgBuf).metadata();
-      const w = meta.width || 512;
-      const h = meta.height || 512;
+      img.contain(512, 512);
 
-      // ── Font sizing ────────────────────────────────────────────────────
-      const fontSize = Math.max(28, Math.floor(w / 12));
-      const lineHeight = Math.floor(fontSize * 1.2);
-      const strokeW = Math.max(3, Math.floor(fontSize / 9));
-      const maxW = Math.floor(w * 0.92);
+      const total = (atas + bawah).length;
+      const fontWhite = await Jimp.loadFont(total <= 14 ? Jimp.FONT_SANS_64_WHITE : Jimp.FONT_SANS_32_WHITE);
+      const fontBlack = await Jimp.loadFont(total <= 14 ? Jimp.FONT_SANS_64_BLACK : Jimp.FONT_SANS_32_BLACK);
+      const maxW = 480;
+      const margin = 16;
 
-      const charPx = fontSize * 0.48;
-      const maxChars = Math.max(8, Math.floor(maxW / charPx));
-
-      const wrapText = (txt) => {
-        const words = txt.toUpperCase().split(' ');
-        const lines = [];
-        let current = '';
-        for (const word of words) {
-          const test = current ? `${current} ${word}` : word;
-          if (test.length > maxChars && current) {
-            lines.push(current);
-            current = word;
-          } else {
-            current = test;
-          }
+      const drawText = (txt, atBottom) => {
+        if (!txt) return;
+        const t = txt.toUpperCase();
+        const textH = Jimp.measureTextHeight(fontWhite, t, maxW);
+        const y = atBottom ? 512 - 8 - textH : 8;
+        const opts = { text: t, alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER };
+        for (const [dx, dy] of [[-2,-2],[-2,0],[-2,2],[0,-2],[0,2],[2,-2],[2,0],[2,2]]) {
+          img.print(fontBlack, margin + dx, y + dy, opts, maxW);
         }
-        if (current) lines.push(current);
-        return lines;
+        img.print(fontWhite, margin, y, opts, maxW);
       };
 
-      // XML-safe escape
-      const esc = (s) => s
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+      drawText(atas, false);
+      drawText(bawah, true);
 
-      // Build SVG lines; textLength ensures no line ever clips at edges
-      const buildLines = (txt, anchorY, direction) => {
-        if (!txt) return '';
-        const lines = wrapText(txt);
-        return lines.map((line, i) => {
-          const y = direction === 'top'
-            ? anchorY + i * lineHeight
-            : anchorY - (lines.length - 1 - i) * lineHeight;
-          // Estimated natural width; cap to maxW to prevent clipping
-          const estW = Math.round(line.length * charPx);
-          const tlAttr = estW > maxW
-            ? `textLength="${maxW}" lengthAdjust="spacingAndGlyphs"`
-            : '';
-          return `<text x="${w / 2}" y="${y}" ${tlAttr}>${esc(line)}</text>`;
-        }).join('\n');
-      };
-
-      const topStartY = fontSize + 8;
-      const bottomAnchorY = h - 12;
-
-      const svg = `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
-  <style>
-    text {
-      font-family: Impact, "Arial Black", "Franklin Gothic Heavy", sans-serif;
-      font-size: ${fontSize}px;
-      font-weight: 900;
-      text-anchor: middle;
-      paint-order: stroke fill;
-      stroke: #000000;
-      stroke-width: ${strokeW}px;
-      stroke-linejoin: round;
-      fill: #FFFFFF;
-    }
-  </style>
-  ${buildLines(atas, topStartY, 'top')}
-  ${buildLines(bawah, bottomAnchorY, 'bottom')}
-</svg>`;
-
-      const withText = await sharp(imgBuf)
-        .composite([{ input: Buffer.from(svg), gravity: 'northwest' }])
-        .png()
-        .toBuffer();
-
-      const resized = await sharp(withText)
-        .resize(512, 512, {
-          fit: 'contain',
-          background: { r: 0, g: 0, b: 0, alpha: 0 },
-        })
-        .png()
-        .toBuffer();
+      const resized = await img.getBufferAsync(Jimp.MIME_PNG);
 
       const sticker = new Sticker(resized, {
         pack: pushname,
         author: 'BLACK-MD',
         type: StickerTypes.DEFAULT,
-        quality: 100,
-        background: 'transparent',
+        quality: 90,
       });
       const stickerBuffer = await sticker.toBuffer();
       await client.sendMessage(m.chat, { sticker: stickerBuffer }, { quoted: m });

@@ -33,7 +33,7 @@ module.exports = [
       StickerTypes
     } = require('../lib/stickerlite');
 
-    const ffmpegPath = require('ffmpeg-static');
+    const ffmpegPath = require('../lib/stickerlite').ffmpegBin();
     const from = m.chat;
     const mek = m;
 
@@ -277,7 +277,7 @@ module.exports = [
         const os = require('os');
         const path = require('path');
         let ffmpegPath;
-        try { ffmpegPath = require('ffmpeg-static'); } catch { ffmpegPath = 'ffmpeg'; }
+        ffmpegPath = require('../lib/stickerlite').ffmpegBin();
 
         const id = Date.now();
         const tmpDir = os.tmpdir();

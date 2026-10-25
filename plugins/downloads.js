@@ -3,6 +3,17 @@
 const axios = global.axios || require('axios');
 const fetch = require('node-fetch');
 const yts = require('yt-search');
+
+// Keith API base used by every command in this file (override with the KEITH_API env var)
+const KEITH_API = (process.env.KEITH_API || 'https://apis.keithsite.lol').replace(/\/+$/, '');
+
+// Download sources on an API server are tried on BOTH: the bot's own `api` (unchanged) and Keith's.
+function apiBases(api) {
+  const out = [];
+  if (api) out.push({ base: String(api).replace(/\/+$/, ''), label: 'api' });
+  if (!out.some(o => o.base === KEITH_API)) out.push({ base: KEITH_API, label: 'keith' });
+  return out;
+}
 const _fs = require('fs');
 const _os = require('os');
 const _path = require('path');
@@ -141,9 +152,9 @@ async function fetchInstagram(link, api) {
   });
 
   // The bot's own API base (the one that already serves your YouTube/FB/Pinterest commands)
-  if (api) {
-    add('api/instagramdl', fromApi(`${api}/download/instagramdl?url=${enc}`, null, 100000));
-    add('api/instadl', fromApi(`${api}/download/instadl?url=${enc}`, null, 60000));
+  for (const { base, label } of apiBases(api)) {
+    add(`${label}/instagramdl`, fromApi(`${base}/download/instagramdl?url=${enc}`, null, 100000));
+    add(`${label}/instadl`, fromApi(`${base}/download/instadl?url=${enc}`, null, 60000));
   }
 
   add('bk9-1', fromApi(`https://api.bk9.dev/download/instagram?url=${enc}`, d => d?.status && d.BK9));
@@ -250,10 +261,10 @@ async function ensureYtDlp() {
   catch (e) { ytdlpFailedAt = Date.now(); throw e; }
 }
 
-function runYtDlp(bin, watchUrl) {
+function runYtDlp(bin, watchUrl, fmt = 'bestaudio[ext=m4a]/bestaudio', maxMb = 60) {
   return new Promise((resolve, reject) => {
-    const MAX = 60 * 1024 * 1024;
-    const child = _spawn(bin, ['-f', 'bestaudio[ext=m4a]/bestaudio', '--no-playlist', '--no-warnings', '--no-progress', '--max-filesize', '60M', '-o', '-', watchUrl], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const MAX = maxMb * 1024 * 1024;
+    const child = _spawn(bin, ['-f', fmt, '--no-playlist', '--no-warnings', '--no-progress', '--max-filesize', `${maxMb}M`, '-o', '-', watchUrl], { stdio: ['ignore', 'pipe', 'pipe'] });
     const chunks = []; let size = 0; let err = '';
     const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('yt-dlp timed out')); }, 150000);
     child.stdout.on('data', d => { size += d.length; if (size > MAX) { child.kill('SIGKILL'); } else chunks.push(d); });
@@ -304,7 +315,10 @@ async function fetchYtAudio(videoUrl, api) {
 
   if (videoId) add('yt-dlp', async () => ({ buffer: await runYtDlp(await ensureYtDlp(), `https://www.youtube.com/watch?v=${videoId}`) }));
   if (videoId && process.env.RAPIDAPI_KEY) add('rapidapi', () => rapidApiLink(videoId));
-  if (api) add('api/audio', viaApi(`${api}/download/audio?url=${enc}`, 90000));
+  for (const { base, label } of apiBases(api)) {
+    add(`${label}/audio`, viaApi(`${base}/download/audio?url=${enc}`, 90000));
+    add(`${label}/ytmp3`, viaApi(`${base}/download/ytmp3?url=${enc}`, 90000));
+  }
   add('xcasper', viaApi(`https://apis.xcasper.space/api/downloader/ytmp3?url=${enc}`, 90000));
   add('gifted', viaApi(`https://mcow.giftedtechnexus.workers.dev/api/yta?url=${enc}`));
 
@@ -341,46 +355,88 @@ async function fetchYtAudio(videoUrl, api) {
   try { return await Promise.any(attempts); } catch { return null; }
 }
 
-// ─── YouTube video (multi-source) ────────────────────────────────────────
+// ─── YouTube video (multi-source, verified) ──────────────────────────────
 
-// Returns { url, title } from the first source that gives a real video link.
-// Reasons for every failure are kept in fetchYtVideo.lastErrors (shown to the user).
+// Same idea as for audio: a real video is megabytes. Reject stubs, web pages and JSON.
+function checkVideo(buf, contentType = '') {
+  const kb = Math.round((buf ? buf.length : 0) / 1024);
+  const ct = String(contentType).split(';')[0] || '?';
+  if (!buf || !buf.length) throw new Error('empty file');
+  const info = sniff(buf);
+  if (info.kind === 'html') {
+    const title = (buf.slice(0, 20000).toString('utf8').match(/<title[^>]*>([^<]{1,60})/i) || [])[1];
+    throw new Error(`${kb}KB web page, not video${title ? ` ("${title.trim()}")` : ''}`);
+  }
+  if (info.kind === 'json') {
+    const peek = buf.slice(0, 60).toString('utf8').replace(/\s+/g, ' ').replace(/https?:\/\/\S+/g, 'URL');
+    throw new Error(`${kb}KB json, not video: ${peek}`);
+  }
+  if (buf.slice(4, 8).toString('latin1') !== 'ftyp') throw new Error(`${kb}KB not an mp4 file (${ct})`);
+  if (buf.length < 100 * 1024) {
+    const e = new Error(`${kb}KB video stub (${ct}) - too short`);
+    e.small = true;
+    throw e;
+  }
+  return { mimetype: 'video/mp4', ext: 'mp4' };
+}
+
+// Returns { buffer, title, source } or null (reasons in fetchYtVideo.lastErrors)
 async function fetchYtVideo(videoUrl, api) {
   const enc = encodeURIComponent(videoUrl);
+  const videoId = (String(videoUrl).match(/(?:youtu\.be\/|[?&]v=|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})/) || [])[1];
   const names = [];
   const jobs = [];
   const add = (name, fn) => { names.push(name); jobs.push(fn); };
 
-  const pick = (d) => {
-    const urls = [...new Set(collectMedia(d))].filter(u => !/youtube\.com|youtu\.be|ytimg\.com/i.test(u));
-    const vid = urls.find(u => /\.mp4|video|googlevideo|download/i.test(u)) || urls[0];
-    if (!vid) {
-      let peek = ''; try { peek = JSON.stringify(d).replace(/https?:\/\/\S+?(?=["\\])/g, 'URL').slice(0, 60); } catch {}
-      throw new Error(`no link in reply ${peek}`);
-    }
-    return { url: vid, title: d?.title || d?.result?.title || d?.data?.title || d?.BK9?.title || null };
-  };
-  const src = (url, timeout, ok) => async () => {
+  const viaApi = (url, timeout, ok) => async () => {
     const d = await getJson(url, timeout);
     if (ok && !ok(d)) throw new Error('unsuccessful reply');
-    return pick(d);
+    const urls = [...new Set(collectMedia(d))].filter(u => !/youtube\.com|youtu\.be|ytimg\.com/i.test(u) && !IMG_EXT.test(u));
+    urls.sort((x, y) => (/\.mp4|video|download|dl/i.test(y) ? 1 : 0) - (/\.mp4|video|download|dl/i.test(x) ? 1 : 0));
+    if (!urls.length) {
+      let peek = ''; try { peek = JSON.stringify(d).replace(/https?:\/\/\S+?(?=["\\])/g, 'URL').slice(0, 50); } catch {}
+      throw new Error(`no link in reply ${peek}`);
+    }
+    return { url: urls[0], title: d?.title || d?.result?.title || d?.data?.title || d?.BK9?.title || null };
   };
 
-  if (api) {
-    add('api/mp4', src(`${api}/download/mp4?url=${enc}`, 90000));
-    add('api/ytmp4', src(`${api}/download/ytmp4?url=${enc}`, 90000));
+  // Keith API first (all sources run at once - the first REAL video wins)
+  for (const { base, label } of apiBases(api).reverse()) { // Keith's address first
+    add(`${label}/mp4`, viaApi(`${base}/download/mp4?url=${enc}`, 90000));
+    add(`${label}/ytmp4`, viaApi(`${base}/download/ytmp4?url=${enc}`, 90000));
   }
-  add('gifted', src(`https://mcow.giftedtechnexus.workers.dev/api/ytv?url=${enc}`, 60000));
-  add('xcasper', src(`https://apis.xcasper.space/api/downloader/ytmp4?url=${enc}`, 60000));
-  add('supreme', src(`https://apissupreme.vercel.app/media/ytmp4?apikey=supreme&url=${enc}`, 60000, d => d?.status));
+  add('gifted', viaApi(`https://mcow.giftedtechnexus.workers.dev/api/ytv?url=${enc}`, 60000));
+  add('xcasper', viaApi(`https://apis.xcasper.space/api/downloader/ytmp4?url=${enc}`, 60000));
+  if (videoId) add('yt-dlp', async () => ({ buffer: await runYtDlp(await ensureYtDlp(), `https://www.youtube.com/watch?v=${videoId}`, 'b[ext=mp4][height<=720]/b[ext=mp4]', 100) }));
+
+  const download = async (u) => axios.get(u, {
+    responseType: 'arraybuffer', timeout: 150000, maxContentLength: 150 * 1024 * 1024,
+    headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36', Accept: '*/*' }
+  });
 
   fetchYtVideo.lastErrors = [];
-  const attempts = jobs.map((j, i) => j().catch(e => {
-    const why = e?.response?.status ? `HTTP ${e.response.status}` : (e?.code || e?.message || 'error');
-    console.error(`[ytv] ${names[i]} failed: ${why}`);
-    fetchYtVideo.lastErrors.push(`${names[i]}: ${String(why).slice(0, 60)}`);
-    throw e;
-  }));
+  const attempts = jobs.map(async (job, i) => {
+    try {
+      const got = await job();
+      if (got.buffer) { checkVideo(got.buffer, 'video/mp4'); return { buffer: got.buffer, title: null, source: names[i] }; }
+      let res = await download(got.url);
+      let buffer = Buffer.from(res.data);
+      try { checkVideo(buffer, res.headers?.['content-type']); }
+      catch (e) {
+        if (!e.small) throw e;
+        await wait(6000); // maybe still converting: one more try
+        res = await download(got.url);
+        buffer = Buffer.from(res.data);
+        checkVideo(buffer, res.headers?.['content-type']);
+      }
+      return { buffer, title: got.title, source: names[i] };
+    } catch (e) {
+      const why = e?.response?.status ? `HTTP ${e.response.status}` : (e?.code || e?.message || 'error');
+      console.error(`[ytv] ${names[i]} failed: ${why}`);
+      fetchYtVideo.lastErrors.push(`${names[i]}: ${String(why).slice(0, 95)}`);
+      throw e;
+    }
+  });
   try { return await Promise.any(attempts); } catch { return null; }
 }
 
@@ -512,7 +568,7 @@ module.exports = [
     aliases: ['ytv', 'ytmp4'],
     description: 'Download YouTube video (MP4)',
     category: 'downloads',
-    handler: async (client, m, { text }) => {
+    handler: async (client, m, { text, api }) => {
       if (!text) return m.reply('🎬 Provide a video name or YouTube link!\nEg:- *ytv Blinding Lights*');
       try {
         await client.sendMessage(m.chat, { react: { text: '🎬', key: m.key } });
@@ -520,8 +576,10 @@ module.exports = [
 
         let videoUrl, videoTitle;
         if (text.match(/(youtube\.com|youtu\.be)/i)) {
-          videoUrl = text;
-          videoTitle = 'YouTube Video';
+          videoUrl = text.trim().split(/\s+/).find(w => /youtube\.com|youtu\.be/i.test(w)) || text.trim();
+          const vid = (videoUrl.match(/(?:youtu\.be\/|[?&]v=|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})/) || [])[1];
+          const info = vid ? await yts({ videoId: vid }).catch(() => null) : null;
+          videoTitle = info?.title || 'YouTube Video';
         } else {
           const search = await yts(text);
           const video = search.videos[0];
@@ -532,35 +590,22 @@ module.exports = [
 
         await client.sendMessage(m.chat, { text: `😍 Found: *${videoTitle}*\n⏳ Downloading...`, edit: msg.key });
 
-        const apiRes = await axios.get(
-          `https://apissupreme.vercel.app/media/ytmp4?apikey=supreme&url=${encodeURIComponent(videoUrl)}`,
-          { timeout: 60000 }
-        );
-        const data = apiRes.data;
-        if (!data.status) {
-          return client.sendMessage(m.chat, { text: '❌ Download failed. Try a different video.', edit: msg.key });
+        const found = await fetchYtVideo(videoUrl, api);
+        if (!found) {
+          const why = (fetchYtVideo.lastErrors || []).join('\n');
+          return client.sendMessage(m.chat, { text: '❌ Download failed. Try again in a minute.' + (why ? `\n\n🔎 Sources tried:\n${why}` : ''), edit: msg.key });
         }
 
-        const finalTitle = data.title || videoTitle;
-        const downloadUrl = data.downloadUrl;
+        // prefer the real YouTube title over whatever name a download service made up
+        const finalTitle = (videoTitle && videoTitle !== 'YouTube Video') ? videoTitle : (found.title || videoTitle);
         const fileName = finalTitle.replace(/[\/\\:*?"<>|]/g, '').trim() + '.mp4';
 
-        await client.sendMessage(m.chat, { text: `✅ Downloading: *${finalTitle}*`, edit: msg.key });
-
-        const head = await axios.head(downloadUrl, { timeout: 15000 }).catch(() => null);
-        const size = head?.headers?.['content-length'];
-        if (size && parseInt(size) > 150 * 1024 * 1024) {
-          return client.sendMessage(m.chat, { text: '❌ Video too large (>150MB). Try a shorter video.', edit: msg.key });
-        }
-
-        const dlRes = await axios.get(downloadUrl, { responseType: 'arraybuffer', timeout: 120000 });
-        const buffer = Buffer.from(dlRes.data);
-
-        await client.sendMessage(m.chat, { video: buffer, mimetype: 'video/mp4', fileName, caption: `🎬 *${finalTitle}*` }, { quoted: m });
-        await client.sendMessage(m.chat, { document: buffer, mimetype: 'video/mp4', caption: '*DOWNLOADED BY 𝐁𝐋𝐀𝐂𝐊-𝐌𝐃*', fileName }, { quoted: m });
+        await client.sendMessage(m.chat, { video: found.buffer, mimetype: 'video/mp4', fileName, caption: `🎬 *${finalTitle}*` }, { quoted: m });
+        await client.sendMessage(m.chat, { document: found.buffer, mimetype: 'video/mp4', caption: '*DOWNLOADED BY 𝐁𝐋𝐀𝐂𝐊-𝐌𝐃*', fileName }, { quoted: m });
         await client.sendMessage(m.chat, { text: `✅ Successfully downloaded! *${finalTitle}*`, edit: msg.key });
       } catch (err) {
-        m.reply('❌ An error occurred. Try again.');
+        console.error('[ytv] failed:', err.message);
+        m.reply(`❌ An error occurred. Try again.\n\n🔎 ${String(err?.response?.status ? 'HTTP ' + err.response.status : err.message).slice(0, 80)}`);
       }
     }
   },

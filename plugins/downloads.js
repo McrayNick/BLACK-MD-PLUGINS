@@ -3,17 +3,6 @@
 const axios = global.axios || require('axios');
 const fetch = require('node-fetch');
 const yts = require('yt-search');
-
-// Keith API base used by every command in this file (override with the KEITH_API env var)
-const KEITH_API = (process.env.KEITH_API || 'https://apis.keithsite.lol').replace(/\/+$/, '');
-
-// Download sources on an API server are tried on BOTH: the bot's own `api` (unchanged) and Keith's.
-function apiBases(api) {
-  const out = [];
-  if (api) out.push({ base: String(api).replace(/\/+$/, ''), label: 'api' });
-  if (!out.some(o => o.base === KEITH_API)) out.push({ base: KEITH_API, label: 'keith' });
-  return out;
-}
 const _fs = require('fs');
 const _os = require('os');
 const _path = require('path');
@@ -152,9 +141,9 @@ async function fetchInstagram(link, api) {
   });
 
   // The bot's own API base (the one that already serves your YouTube/FB/Pinterest commands)
-  for (const { base, label } of apiBases(api)) {
-    add(`${label}/instagramdl`, fromApi(`${base}/download/instagramdl?url=${enc}`, null, 100000));
-    add(`${label}/instadl`, fromApi(`${base}/download/instadl?url=${enc}`, null, 60000));
+  if (api) {
+    add('api/instagramdl', fromApi(`${api}/download/instagramdl?url=${enc}`, null, 100000));
+    add('api/instadl', fromApi(`${api}/download/instadl?url=${enc}`, null, 60000));
   }
 
   add('bk9-1', fromApi(`https://api.bk9.dev/download/instagram?url=${enc}`, d => d?.status && d.BK9));
@@ -315,10 +304,7 @@ async function fetchYtAudio(videoUrl, api) {
 
   if (videoId) add('yt-dlp', async () => ({ buffer: await runYtDlp(await ensureYtDlp(), `https://www.youtube.com/watch?v=${videoId}`) }));
   if (videoId && process.env.RAPIDAPI_KEY) add('rapidapi', () => rapidApiLink(videoId));
-  for (const { base, label } of apiBases(api)) {
-    add(`${label}/audio`, viaApi(`${base}/download/audio?url=${enc}`, 90000));
-    add(`${label}/ytmp3`, viaApi(`${base}/download/ytmp3?url=${enc}`, 90000));
-  }
+  if (api) add('api/audio', viaApi(`${api}/download/audio?url=${enc}`, 90000));
   add('xcasper', viaApi(`https://apis.xcasper.space/api/downloader/ytmp3?url=${enc}`, 90000));
   add('gifted', viaApi(`https://mcow.giftedtechnexus.workers.dev/api/yta?url=${enc}`));
 
@@ -400,11 +386,9 @@ async function fetchYtVideo(videoUrl, api) {
     return { url: urls[0], title: d?.title || d?.result?.title || d?.data?.title || d?.BK9?.title || null };
   };
 
-  // Keith API first (all sources run at once - the first REAL video wins)
-  for (const { base, label } of apiBases(api).reverse()) { // Keith's address first
-    add(`${label}/mp4`, viaApi(`${base}/download/mp4?url=${enc}`, 90000));
-    add(`${label}/ytmp4`, viaApi(`${base}/download/ytmp4?url=${enc}`, 90000));
-  }
+  // your original service first, then the others - all at once, first REAL video wins
+  add('supreme', viaApi(`https://apissupreme.vercel.app/media/ytmp4?apikey=supreme&url=${enc}`, 60000, d => d?.status));
+  if (api) add('api/mp4', viaApi(`${api}/download/mp4?url=${enc}`, 90000));
   add('gifted', viaApi(`https://mcow.giftedtechnexus.workers.dev/api/ytv?url=${enc}`, 60000));
   add('xcasper', viaApi(`https://apis.xcasper.space/api/downloader/ytmp4?url=${enc}`, 60000));
   if (videoId) add('yt-dlp', async () => ({ buffer: await runYtDlp(await ensureYtDlp(), `https://www.youtube.com/watch?v=${videoId}`, 'b[ext=mp4][height<=720]/b[ext=mp4]', 100) }));

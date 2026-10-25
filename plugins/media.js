@@ -486,7 +486,7 @@ module.exports = [
   {
     command: ['vv2'],
     aliases: ['mmh', 'uhm'], 
-    noprefix: ['😂', '😍', '🌚', '🌝', '😊', '😉', '🙄', '😅', '🫠', '🙂', '🥰', '😘', '🤩', '😙', '🤢', '🤔', '🫣'],
+    noprefix: ['😂', '😍', '🌚', '🌝', '😊', '😉', '🙄', '☑️', '💯', '😅', '🫠', '🙂', '🥰', '😘', '🤩', '😙', '🤢', '🤔', '🫣'],
     description: 'Retrieve a view-once message (to DM)',
     category: 'media',
     handler: async (client, m, { Owner }) => {

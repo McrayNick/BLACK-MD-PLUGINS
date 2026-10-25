@@ -373,24 +373,42 @@ module.exports = [
       if (emojis.length !== 2) return m.reply("Specify the emojis and separate with '+'");
       const emoji1 = emojis[0].trim();
       const emoji2 = emojis[1].trim();
+      const getMixUrl = async () => {
+        // 1) original API
+        try {
+          const r = await global.axios.get(
+            `https://levanter.onrender.com/emix?q=${encodeURIComponent(emoji1 + emoji2)}`,
+            { timeout: 15000 }
+          );
+          if (r.data && r.data.status === true && r.data.result) return r.data.result;
+        } catch {}
+        // 2) fallback: Google Emoji Kitchen (via Tenor)
+        try {
+          const key = 'AIzaSyACvEq5cbgoUGQ3Y3YfcYLqb-VPV1hbBD0';
+          const url = `https://tenor.googleapis.com/v2/featured?key=${key}&contentfilter=high` +
+            `&media_filter=png_transparent&component=proactive&collection=emoji_kitchen_v5` +
+            `&q=${encodeURIComponent(emoji1 + '_' + emoji2)}`;
+          const r = await global.axios.get(url, { timeout: 15000 });
+          const hit = r.data && r.data.results && r.data.results[0];
+          return (hit && hit.media_formats && hit.media_formats.png_transparent && hit.media_formats.png_transparent.url) || null;
+        } catch {}
+        return null;
+      };
+
       try {
-        const response = await global.axios.get(`https://levanter.onrender.com/emix?q=${emoji1}${emoji2}`);
-        if (response.data.status === true) {
-          let stickerMess = new Sticker(response.data.result, {
-            pack: botname,
-            type: StickerTypes.CROPPED,
-            categories: ['🤩', '🎉'],
-            id: '12345',
-            quality: 70,
-            background: 'transparent'
-          });
-          const stickerBuffer = await stickerMess.toBuffer();
-          client.sendMessage(m.chat, { sticker: stickerBuffer }, { quoted: m });
-        } else {
-          m.reply('Unable to create emoji mix.');
-        }
+        const mixUrl = await getMixUrl();
+        if (!mixUrl) return m.reply('Unable to create emoji mix. Try a different pair of emojis.');
+        const stickerMess = new Sticker(mixUrl, {
+          pack: botname || 'BLACK-MD',
+          author: 'BLACK-MD',
+          type: StickerTypes.DEFAULT,
+          categories: ['🤩', '🎉'],
+          quality: 80
+        });
+        const stickerBuffer = await stickerMess.toBuffer();
+        await client.sendMessage(m.chat, { sticker: stickerBuffer }, { quoted: m });
       } catch (error) {
-        m.reply('An error occurred while creating the emoji mix.' + error);
+        m.reply('An error occurred while creating the emoji mix. ' + error.message);
       }
     }
   },

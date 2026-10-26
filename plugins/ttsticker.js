@@ -167,13 +167,13 @@ async function addExif(webpBuf, pack, author) {
 // ── comment stickers / pictures that viewers post under a TikTok video ────
 function pickImages(node, out = [], depth = 0) {
   if (!node || depth > 8) return out;
-  if (typeof node === 'string') { if (/^https?:\/\//i.test(node) && !/\.(mp3|mp4)(\?|$)/i.test(node)) out.push({ url: node, anim: /anim|gif/i.test(node) }); return out; }
+  if (typeof node === 'string') { if (/^https?:\/\//i.test(node) && !/\.(mp3|m4a|aac)(\?|$)/i.test(node)) out.push({ url: node, anim: /anim|gif|mp4|video|webm/i.test(node), video: /\.mp4|\.webm|video/i.test(node) }); return out; }
   if (Array.isArray(node)) { node.forEach(n => pickImages(n, out, depth + 1)); return out; }
   if (typeof node === 'object') {
     for (const k of Object.keys(node)) {
-      if (/user|avatar|author|thumb|cover|label|emoji|text_extra|music/i.test(k)) continue;
+      if (/user|avatar|author|thumb|cover|label|emoji|text_extra|music|audio/i.test(k)) continue;
       const v = node[k];
-      if (typeof v === 'string' && /^https?:\/\//i.test(v) && /sticker|image|img|animate|static|webp|gif|png|jpe?g|obj\//i.test(k + v)) out.push({ url: v, anim: /anim|gif/i.test(k + v) });
+      if (typeof v === 'string' && /^https?:\/\//i.test(v) && /sticker|image|img|animate|static|webp|gif|png|jpe?g|obj\//i.test(k + v)) out.push({ url: v, anim: /anim|gif|mp4|video|webm/i.test(k + v), video: /video|\.mp4|\.webm/i.test(k + v) });
       else pickImages(v, out, depth + 1);
     }
   }
@@ -181,48 +181,78 @@ function pickImages(node, out = [], depth = 0) {
 }
 
 const seenKeys = new Set();
-async function commentStickers(link, want) {
-  const found = [];
-  const seenIds = new Set();
+// reads the comments page by page and hands over each picture as soon as it is found
+async function* commentImages(link) {
+  const seenIds = new Set(), seenUrls = new Set();
   seenKeys.clear();
   let cursor = 0, total = 0, stop = 'reached the limit', apiTotal = 0, emptyPages = 0;
-  for (let page = 0; page < 120 && found.length < want; page++) {
-    let d;
-    // tikwm's free API allows 1 request per second: wait and retry when it says so
-    for (let tryNo = 0; tryNo < 6; tryNo++) {
-      try {
-        d = (await axios.get(`https://www.tikwm.com/api/comment/list/?url=${encodeURIComponent(link)}&count=50&cursor=${cursor}`, { timeout: 30000, headers: { 'User-Agent': UA } })).data;
-      } catch (e) { d = { code: -1, msg: 'request failed: ' + String(e.response?.status || e.message).slice(0, 40) }; }
-      if (d?.code !== 0 && /limit|too many|second/i.test(String(d?.msg))) { await new Promise(r => setTimeout(r, 1500)); continue; }
-      break;
+  commentImages.scanned = 0; commentImages.info = '';
+  try {
+    for (let page = 0; page < 120; page++) {
+      let d;
+      // tikwm's free API allows 1 request per second: wait and retry when it says so
+      for (let tryNo = 0; tryNo < 6; tryNo++) {
+        try {
+          d = (await axios.get(`https://www.tikwm.com/api/comment/list/?url=${encodeURIComponent(link)}&count=50&cursor=${cursor}`, { timeout: 30000, headers: { 'User-Agent': UA } })).data;
+        } catch (e) { d = { code: -1, msg: 'request failed: ' + String(e.response?.status || e.message).slice(0, 40) }; }
+        if (d?.code !== 0 && /limit|too many|second/i.test(String(d?.msg))) { await new Promise(r => setTimeout(r, 1500)); continue; }
+        break;
+      }
+      const list = d?.data?.comments || [];
+      apiTotal = Number(d?.data?.total) || apiTotal;
+      if (!list.length) { stop = d?.msg && d.code !== 0 ? String(d.msg).slice(0, 50) : 'no more comments'; break; }
+      let fresh = 0;
+      for (const c of list) {
+        const id = c.id || c.cid || JSON.stringify(c).slice(0, 80);
+        if (seenIds.has(id)) continue;
+        seenIds.add(id); fresh++; total++; commentImages.scanned = total;
+        Object.keys(c).forEach(k => seenKeys.add(k));
+        const imgs = pickImages(Object.keys(c).filter(k => !/^(user|text|text_extra|reply_.*|id|cid|status|create_time|digg_count|video_id)$/i.test(k)).map(k => c[k]).filter(Boolean));
+        if (!imgs.length) continue;
+        const best = imgs.find(i => i.video) || imgs.find(i => i.anim) || imgs[0];
+        const key = best.url.split('?')[0];
+        if (seenUrls.has(key)) continue;
+        seenUrls.add(key);
+        yield { ...best, alt: imgs.filter(i => i.url !== best.url).map(i => i.url), likes: Number(c.digg_count) || 0 };
+      }
+      const next = Number(d?.data?.cursor);
+      const hasMore = d?.data?.hasMore ?? d?.data?.has_more;
+      if (fresh === 0) { if (++emptyPages >= 2) { stop = 'no new comments'; break; } } else emptyPages = 0;
+      if (hasMore === false || hasMore === 0) { stop = 'end of comments'; break; }
+      cursor = next && next !== cursor ? next : cursor + list.length;
+      await new Promise(r => setTimeout(r, 1200));
     }
-    const list = d?.data?.comments || [];
-    apiTotal = Number(d?.data?.total) || apiTotal;
-    if (!list.length) { stop = d?.msg && d.code !== 0 ? String(d.msg).slice(0, 50) : 'no more comments'; break; }
-    let fresh = 0;
-    for (const c of list) {
-      const id = c.id || c.cid || JSON.stringify(c).slice(0, 80);
-      if (seenIds.has(id)) continue;
-      seenIds.add(id); fresh++; total++;
-      Object.keys(c).forEach(k => seenKeys.add(k));
-      const imgs = pickImages(Object.keys(c).filter(k => /sticker|image|img|pic|photo/i.test(k)).map(k => c[k]).filter(Boolean));
-      if (!imgs.length) continue;
-      const best = imgs.find(i => i.anim) || imgs[0];
-      if (!found.some(f => f.url === best.url)) found.push({ ...best, alt: imgs.filter(i => i.url !== best.url).map(i => i.url) });
-      if (found.length >= want) break;
-    }
-    // next page: use TikTok's cursor when it moves, otherwise just step forward by what we already read
-    const next = Number(d?.data?.cursor);
-    const hasMore = d?.data?.hasMore ?? d?.data?.has_more;
-    if (fresh === 0) { if (++emptyPages >= 2) { stop = 'no new comments'; break; } } else emptyPages = 0;
-    if (hasMore === false || hasMore === 0) { stop = 'end of comments'; break; }
-    cursor = next && next !== cursor ? next : cursor + list.length;
-    await new Promise(r => setTimeout(r, 1200));
+  } finally {
+    commentImages.info = `${stop}${apiTotal ? `, video has ~${apiTotal} comments` : ''}`;
   }
-  commentStickers.scanned = total;
-  commentStickers.info = `${stop}${apiTotal ? `, video has ~${apiTotal} comments` : ''}`;
-  return found;
 }
+
+// width/height straight from the file header (jpeg, png, gif, webp)
+function imageSize(b) {
+  try {
+    if (b[0] === 0x89 && b.toString('latin1', 1, 4) === 'PNG') return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
+    if (b.toString('latin1', 0, 3) === 'GIF') return { w: b.readUInt16LE(6), h: b.readUInt16LE(8) };
+    if (b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') {
+      const t = b.toString('latin1', 12, 16);
+      if (t === 'VP8X') return { w: 1 + b.readUIntLE(24, 3), h: 1 + b.readUIntLE(27, 3) };
+      if (t === 'VP8L') { const v = b.readUInt32LE(21); return { w: (v & 0x3fff) + 1, h: ((v >> 14) & 0x3fff) + 1 }; }
+      if (t === 'VP8 ') return { w: b.readUInt16LE(26) & 0x3fff, h: b.readUInt16LE(28) & 0x3fff };
+    }
+    if (b[0] === 0xff && b[1] === 0xd8) {
+      let i = 2;
+      while (i < b.length - 9) {
+        if (b[i] !== 0xff) { i++; continue; }
+        const mk = b[i + 1];
+        if (mk >= 0xc0 && mk <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(mk)) return { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) };
+        i += 2 + b.readUInt16BE(i + 2);
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+// sticker-like pictures are roughly square; tall phone screenshots and wide posters are not
+const MIN_RATIO = 0.75, MAX_RATIO = 1.45;
 
 // sharp (pulled in by wa-sticker-formatter) needs no ffmpeg: resize to 512x512 and shrink until it fits
 async function sharpSticker(buf) {
@@ -263,35 +293,29 @@ module.exports = [
     handler: async (client, m, { text, pushname }) => {
       const quoted = m.quoted ? [m.quoted.text, m.quoted.body, m.quoted.caption, m.quoted.msg?.text].filter(Boolean).join(' ') : '';
       const link = ((`${text || ''} ${quoted}`).match(/https?:\/\/[^\s]*tiktok\.com[^\s]*/i) || [])[0];
-      if (!link) return m.reply(`📌 Send a TikTok video link to get the stickers from its comments.\nExample: .ttsticker https://vt.tiktok.com/xxxxxxx 10\n(the number is how many, default ${DEFAULT_STICKERS}, max ${MAX_STICKERS})`);
-      const n = Math.min(MAX_STICKERS, Math.max(1, parseInt((text || '').replace(link, '').match(/\d+/)?.[0] || String(DEFAULT_STICKERS), 10)));
+      if (!link) return m.reply(`📌 Send a TikTok video link to get the stickers from its comments.\nExample: .ttsticker https://vt.tiktok.com/xxxxxxx 10\n(the number is how many, default ${DEFAULT_STICKERS}, max ${MAX_STICKERS}; add the word all to also include screenshots)`);
+      const arg = (text || '').replace(link, '');
+      const n = Math.min(MAX_STICKERS, Math.max(1, parseInt(arg.match(/\d+/)?.[0] || String(DEFAULT_STICKERS), 10)));
+      const all = /\ball\b/i.test(arg); // ".ttsticker <link> 20 all" also sends screenshots / tall or wide pictures
       try {
         await client.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
-        const items = await commentStickers(link, n);
-        if (!items.length) return m.reply(`❌ No sticker comments found in ${commentStickers.scanned || 0} comments checked (or comments could not be loaded).\nFields seen: ${[...seenKeys].join(', ').slice(0, 300) || 'none (no comments returned)'}`);
-        let sent = 0, lastErr = '';
-        for (const it of items) {
+        let sent = 0, skipped = 0, found = 0, lastErr = '';
+        for await (const it of commentImages(link)) {
+          if (sent >= n) break;
+          found++;
           try {
             let raw;
             for (const u of [it.url, ...(it.alt || [])]) { try { raw = await downloadBuffer(u); break; } catch (_) {} }
             if (!raw) throw new Error('image download failed');
-            // 1st choice: the bot's own sticker helper (the one your normal sticker command uses)
-            const isGifOrVideo = raw.slice(0, 4).toString('latin1') === 'GIF8' || raw.slice(0, 64).includes('ftyp');
-            const helper = isGifOrVideo ? client.sendVideoAsSticker : client.sendImageAsSticker;
-            if (typeof helper === 'function') {
-              try {
-                await helper.call(client, m.chat, raw, m, { packname: global.botname || 'BLACK-MD', author: pushname || 'BLACK-MD' });
-                sent++;
-                await new Promise(r => setTimeout(r, 600));
-                continue;
-              } catch (e) { lastErr = 'helper: ' + e.message; }
+            if (!all) {
+              const sz = imageSize(raw);
+              if (sz && sz.w && sz.h && (sz.w / sz.h < MIN_RATIO || sz.w / sz.h > MAX_RATIO)) { skipped++; continue; }
             }
             let st;
             try { st = await anyToSticker(raw); }
             catch (e) {
-              // no converter on this server: send the picture itself so nothing is lost
               lastErr = e.message;
-              await client.sendMessage(m.chat, { image: raw, caption: '⚠️ Sent as a picture (add "sharp" to package.json to get real stickers)' }, { quoted: m });
+              await client.sendMessage(m.chat, { image: raw }, { quoted: m });
               sent++;
               await new Promise(r => setTimeout(r, 600));
               continue;
@@ -302,9 +326,9 @@ module.exports = [
             await new Promise(r => setTimeout(r, 600));
           } catch (e) { lastErr = e.message; console.error('[ttsticker item]', e.message); }
         }
-        if (!sent) return m.reply(`❌ Found the comment stickers but could not convert them.\nReason: ${String(lastErr).slice(0, 150)}`);
-        await client.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-        await m.reply(`✅ Sent ${sent} sticker${sent === 1 ? '' : 's'} (checked ${commentStickers.scanned || 0} comments; stopped: ${commentStickers.info}) • ttsticker v14`);
+        await client.sendMessage(m.chat, { react: { text: sent ? '✅' : '❌', key: m.key } });
+        if (!found) return m.reply(`❌ No picture comments found in ${commentImages.scanned || 0} comments checked.\nFields seen: ${[...seenKeys].join(', ').slice(0, 300) || 'none'}`);
+        await m.reply(`${sent ? '✅' : '❌'} Sent ${sent} sticker${sent === 1 ? '' : 's'} (checked ${commentImages.scanned || 0} comments; skipped ${skipped} screenshots/odd-shaped pictures${lastErr ? '; last error: ' + lastErr.slice(0, 80) : ''}) • ttsticker v16`);
       } catch (e) {
         console.error('[ttsticker]', e.message);
         m.reply(`❌ Could not get the stickers: ${String(e.message).slice(0, 120)}`);
@@ -321,7 +345,7 @@ module.exports = [
       if (!link) return m.reply('Send: .ttdebug <TikTok video link>');
       try {
         const out = []; let cursor = 0;
-        for (let page = 0; page < 6 && out.length < 15; page++) {
+        for (let page = 0; page < 25 && out.length < 60; page++) {
           let d;
           for (let t = 0; t < 5; t++) {
             try { d = (await axios.get(`https://www.tikwm.com/api/comment/list/?url=${encodeURIComponent(link)}&count=50&cursor=${cursor}`, { timeout: 30000, headers: { 'User-Agent': UA } })).data; }
@@ -333,7 +357,7 @@ module.exports = [
           if (!list.length) break;
           for (const c of list) {
             const has = JSON.stringify(c, (k, v) => (/^user$/i.test(k) ? undefined : v));
-            if (/https?:\/\//.test(has) && out.length < 15) {
+            if (/https?:\/\//.test(has) && out.length < 60) {
               const copy = JSON.parse(has);
               out.push(copy);
             }
@@ -343,9 +367,13 @@ module.exports = [
         }
         const body = Buffer.from(JSON.stringify({ note: 'comments that contain any link (user info removed)', comments: out }, null, 1));
         // as plain text messages (easy to screenshot/copy) – the data is trimmed to the useful parts
-        const txt = JSON.stringify(out.slice(0, 8), (k, v) => (typeof v === 'string' && v.length > 160 ? v.slice(0, 160) + '…' : v));
         if (!out.length) return m.reply('No comments with pictures found in the first pages.');
-        for (let i = 0; i < txt.length && i < 12000; i += 3000) await client.sendMessage(m.chat, { text: txt.slice(i, i + 3000) }, { quoted: m });
+        const std = /^(id|video_id|text|images|create_time|digg_count|reply_total|status|user)$/i;
+        const odd = out.filter(c => Object.keys(c).some(k => !std.test(k)) || JSON.stringify(c.images || []).match(/\.(mp4|webm|gif)|video/i));
+        const keys = {}; out.forEach(c => Object.keys(c).forEach(k => { keys[k] = (keys[k] || 0) + 1; }));
+        const pick = (odd.length ? odd : out).slice(0, 5);
+        const txt = 'KEYS ' + JSON.stringify(keys) + '\nODD ' + odd.length + '/' + out.length + '\n' + JSON.stringify(pick, (k, v) => (typeof v === 'string' && v.length > 140 ? v.slice(0, 140) + '…' : v));
+        for (let i = 0; i < txt.length && i < 9000; i += 3000) await client.sendMessage(m.chat, { text: txt.slice(i, i + 3000) }, { quoted: m });
       } catch (e) { m.reply('debug failed: ' + e.message); }
     }
   },

@@ -178,28 +178,34 @@ async function commentStickers(link, want) {
   return found;
 }
 
+// sharp (pulled in by wa-sticker-formatter) needs no ffmpeg: resize to 512x512 and shrink until it fits
+async function sharpSticker(buf) {
+  const sharp = require('sharp');
+  let best = null;
+  for (const q of [60, 40, 25, 15]) {
+    const out = await sharp(buf, { animated: true, pages: -1, limit: 300 })
+      .resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .webp({ quality: q, effort: 4 }).toBuffer();
+    if (!best || out.length < best.length) best = out;
+    if (out.length <= 500 * 1024) return out;
+  }
+  if (best.length <= 1000 * 1024) return best;
+  throw new Error('sticker too big after shrinking');
+}
+
 async function anyToSticker(buf) {
   const isWebp = buf.slice(0, 4).toString('latin1') === 'RIFF' && buf.slice(8, 12).toString('latin1') === 'WEBP';
   const isGif = buf.slice(0, 4).toString('latin1') === 'GIF8';
-  const animWebp = isWebp && buf.includes('ANIM');
+  const errs = [];
 
-  if (isWebp) {
-    // ffmpeg cannot read animated webp, so use sharp if the bot has it
-    try {
-      const sharp = require('sharp');
-      const out = await sharp(buf, { animated: true }).resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).webp({ quality: 60 }).toBuffer();
-      if (out.length <= 1000 * 1024) return out;
-    } catch (_) {}
-    // otherwise a webp from TikTok is already sticker-ready: send it as it is
-    if (buf.length <= 1000 * 1024) return buf;
-    if (animWebp) throw new Error('animated webp too big to convert (install "sharp" to fix)');
-  }
+  try { return await sharpSticker(buf); } catch (e) { errs.push('sharp: ' + e.message); }
+
+  // a webp from TikTok is already sticker-ready: send it as it is
+  if (isWebp && buf.length <= 1000 * 1024) return buf;
+
   const animated = isGif || buf.slice(0, 64).includes('ftyp');
-  try { return await toWebp(buf, animated); }
-  catch (e) {
-    if (FFMPEG !== 'ffmpeg') { FFMPEG = 'ffmpeg'; return toWebp(buf, animated); } // try the system ffmpeg
-    throw e;
-  }
+  try { return await toWebp(buf, animated); } catch (e) { errs.push('ffmpeg: ' + e.message); }
+  throw new Error(errs.join(' | '));
 }
 
 module.exports = [

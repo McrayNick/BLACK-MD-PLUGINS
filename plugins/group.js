@@ -881,21 +881,9 @@ module.exports = [
 
         console.log('[groupstatus] sending to', targetJid, '| fields =', Object.keys(gsm));
 
-        // Same call shape the original (working) in-group command used: always pass `quoted`.
-        // In private mode we can't quote the private message (it would reference the wrong chat
-        // and could expose its content), so we pass a harmless blank stub inside the target group.
-        const sendOpts = isPrivate
-          ? {
-              quoted: {
-                key: {
-                  remoteJid: targetJid,
-                  fromMe: true,
-                  id: 'GS' + Date.now().toString(16).toUpperCase()
-                },
-                message: { conversation: '' }
-              }
-            }
-          : { quoted: m };
+        // Use exactly what the original (working) in-group command used: the real message as `quoted`.
+        // (A fake/blank stub produced "Waiting for this message" in the group.)
+        const sendOpts = { quoted: m };
 
         // NOTE: this fork's groupStatusMessage send does not return a message id even when
         // the status is posted, so success = "no error thrown".
@@ -903,7 +891,8 @@ module.exports = [
         console.log('[groupstatus] sent OK to', targetJid);
 
         if (isPrivate) {
-          const label = (targetName || '').trim() || 'the group';
+          const visible = (targetName || '').replace(/[\s\u200B-\u200F\u2060\u2800\u3164\uFEFF]/g, '');
+          const label = visible ? targetName.trim() : 'the group';
           await m.reply(`✅ Posted to group status in *${label}*.`);
         }
       } catch (err) {

@@ -94,15 +94,28 @@ function runFfmpeg(args) {
   });
 }
 
-const SQUARE = 'scale=512:512:force_original_aspect_ratio=increase:flags=lanczos,crop=512:512,format=rgba'; // fills the whole sticker, no empty space
+// How the picture fills the 512x512 sticker:
+//   'blur'    whole picture visible, empty space filled with a blurred copy of itself (default)
+//   'stretch' whole picture visible, squeezed to a square (can look distorted)
+//   'crop'    fills the square but cuts off the edges
+const FIT_MODE = 'stretch';
+const SQUARE = {
+  blur: 'split[a][b];[a]scale=512:512:force_original_aspect_ratio=increase,crop=512:512,boxblur=18:2[bg];[b]scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,format=rgba',
+  stretch: 'scale=512:512:flags=lanczos,format=rgba',
+  crop: 'scale=512:512:force_original_aspect_ratio=increase:flags=lanczos,crop=512:512,format=rgba'
+}[FIT_MODE];
 
 // WhatsApp wants animated stickers around 500 KB: try lighter settings until it fits
 const ATTEMPTS = [
-  { fps: 15, q: 45, t: 6 },
-  { fps: 12, q: 32, t: 5 },
+  { fps: 20, q: 80, t: 6 },
+  { fps: 15, q: 65, t: 6 },
+  { fps: 15, q: 50, t: 5 },
+  { fps: 12, q: 35, t: 5 },
   { fps: 10, q: 22, t: 4 },
   { fps: 8,  q: 15, t: 3 }
 ];
+// still pictures: best quality first, only lower it if the file gets too big
+const STILL_ATTEMPTS = [{ q: 97 }, { q: 90 }, { q: 80 }, { q: 65 }];
 
 async function toWebp(input, isVideo) {
   const id = `ttst-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -111,11 +124,11 @@ async function toWebp(input, isVideo) {
   fs.writeFileSync(inFile, input);
   try {
     let best = null;
-    for (const a of (isVideo ? ATTEMPTS : [{ fps: 1, q: 80, t: 0 }])) {
+    for (const a of (isVideo ? ATTEMPTS : STILL_ATTEMPTS)) {
       const args = ['-y', '-i', inFile];
       if (isVideo) args.push('-t', String(a.t), '-vf', `fps=${a.fps},${SQUARE}`, '-an', '-vsync', '0', '-loop', '0');
       else args.push('-vframes', '1', '-vf', SQUARE);
-      args.push('-c:v', 'libwebp', '-lossless', '0', '-quality', String(a.q), '-compression_level', '6', outFile);
+      args.push('-c:v', 'libwebp', '-lossless', '0', '-quality', String(a.q), '-compression_level', '6', '-preset', 'picture', outFile);
       await runFfmpeg(args);
       const buf = fs.readFileSync(outFile);
       if (!best || buf.length < best.length) best = buf;
@@ -229,7 +242,6 @@ async function anyToSticker(buf) {
   // animated webp: ffmpeg cannot read it, so keep it as it is (like stickerlite does)
   if (isWebp && buf.includes('ANIM') && buf.length <= 1000 * 1024) return buf;
 
-  try { return await sharpSticker(buf); } catch (e) { errs.push('sharp: ' + e.message); }
 
   const animated = isGif || buf.slice(0, 64).includes('ftyp');
   try { return await toWebp(buf, animated); } catch (e) { errs.push('ffmpeg(' + ffmpegBin() + '): ' + e.message); }
@@ -287,7 +299,7 @@ module.exports = [
         }
         if (!sent) return m.reply(`❌ Found the comment stickers but could not convert them.\nReason: ${String(lastErr).slice(0, 150)}`);
         await client.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-        await m.reply(`✅ Sent ${sent} sticker${sent === 1 ? '' : 's'} (checked ${commentStickers.scanned || 0} comments; stopped: ${commentStickers.info}) • ttsticker v8`);
+        await m.reply(`✅ Sent ${sent} sticker${sent === 1 ? '' : 's'} (checked ${commentStickers.scanned || 0} comments; stopped: ${commentStickers.info}) • ttsticker v10`);
       } catch (e) {
         console.error('[ttsticker]', e.message);
         m.reply(`❌ Could not get the stickers: ${String(e.message).slice(0, 120)}`);

@@ -164,7 +164,8 @@ async function commentStickers(link, want) {
     const list = d?.data?.comments || [];
     if (!list.length) break;
     for (const c of list) {
-      const imgs = pickImages([c.image_list, c.sticker, c.images, c.image, c.comment_image, c.sticker_info].filter(Boolean));
+      // only the sticker fields of a comment (not photos, avatars or emojis)
+      const imgs = pickImages(Object.keys(c).filter(k => /sticker/i.test(k)).map(k => c[k]).filter(Boolean));
       if (!imgs.length) continue;
       const best = imgs.find(i => i.anim) || imgs[0];
       if (!found.some(f => f.url === best.url)) found.push({ ...best, alt: imgs.filter(i => i.url !== best.url).map(i => i.url) });
@@ -175,9 +176,27 @@ async function commentStickers(link, want) {
 }
 
 async function anyToSticker(buf) {
-  const head = buf.slice(0, 12).toString('latin1');
-  const animated = head.startsWith('GIF8') || buf.includes('ANIM') || buf.slice(0, 64).includes('ftyp');
-  return toWebp(buf, animated);
+  const isWebp = buf.slice(0, 4).toString('latin1') === 'RIFF' && buf.slice(8, 12).toString('latin1') === 'WEBP';
+  const isGif = buf.slice(0, 4).toString('latin1') === 'GIF8';
+  const animWebp = isWebp && buf.includes('ANIM');
+
+  if (isWebp) {
+    // ffmpeg cannot read animated webp, so use sharp if the bot has it
+    try {
+      const sharp = require('sharp');
+      const out = await sharp(buf, { animated: true }).resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).webp({ quality: 60 }).toBuffer();
+      if (out.length <= 1000 * 1024) return out;
+    } catch (_) {}
+    // otherwise a webp from TikTok is already sticker-ready: send it as it is
+    if (buf.length <= 1000 * 1024) return buf;
+    if (animWebp) throw new Error('animated webp too big to convert (install "sharp" to fix)');
+  }
+  const animated = isGif || buf.slice(0, 64).includes('ftyp');
+  try { return await toWebp(buf, animated); }
+  catch (e) {
+    if (FFMPEG !== 'ffmpeg') { FFMPEG = 'ffmpeg'; return toWebp(buf, animated); } // try the system ffmpeg
+    throw e;
+  }
 }
 
 module.exports = [
@@ -195,20 +214,20 @@ module.exports = [
         await client.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
         const items = await commentStickers(link, n);
         if (!items.length) return m.reply('❌ No sticker/picture comments found on that video (or comments could not be loaded).');
-        let sent = 0;
+        let sent = 0, lastErr = '';
         for (const it of items) {
           try {
             let raw;
             for (const u of [it.url, ...(it.alt || [])]) { try { raw = await downloadBuffer(u); break; } catch (_) {} }
             if (!raw) throw new Error('image download failed');
-            let st = raw.slice(0, 4).toString() === 'RIFF' && !raw.includes('ANIM') && raw.length < 500 * 1024 ? raw : await anyToSticker(raw);
+            let st = await anyToSticker(raw);
             st = await addExif(st, global.botname || 'BLACK-MD', pushname || 'BLACK-MD');
             await client.sendMessage(m.chat, { sticker: st }, { quoted: m });
             sent++;
             await new Promise(r => setTimeout(r, 600));
-          } catch (e) { console.error('[ttsticker item]', e.message); }
+          } catch (e) { lastErr = e.message; console.error('[ttsticker item]', e.message); }
         }
-        if (!sent) return m.reply('❌ Found the comment stickers but could not convert them.');
+        if (!sent) return m.reply(`❌ Found the comment stickers but could not convert them.\nReason: ${String(lastErr).slice(0, 150)}`);
         await client.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
       } catch (e) {
         console.error('[ttsticker]', e.message);

@@ -304,7 +304,7 @@ module.exports = [
         }
         if (!sent) return m.reply(`❌ Found the comment stickers but could not convert them.\nReason: ${String(lastErr).slice(0, 150)}`);
         await client.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-        await m.reply(`✅ Sent ${sent} sticker${sent === 1 ? '' : 's'} (checked ${commentStickers.scanned || 0} comments; stopped: ${commentStickers.info}) • ttsticker v13`);
+        await m.reply(`✅ Sent ${sent} sticker${sent === 1 ? '' : 's'} (checked ${commentStickers.scanned || 0} comments; stopped: ${commentStickers.info}) • ttsticker v14`);
       } catch (e) {
         console.error('[ttsticker]', e.message);
         m.reply(`❌ Could not get the stickers: ${String(e.message).slice(0, 120)}`);
@@ -342,7 +342,10 @@ module.exports = [
           await new Promise(r => setTimeout(r, 1200));
         }
         const body = Buffer.from(JSON.stringify({ note: 'comments that contain any link (user info removed)', comments: out }, null, 1));
-        await client.sendMessage(m.chat, { document: body, mimetype: 'application/json', fileName: 'tt-comments-debug.json' }, { quoted: m });
+        // as plain text messages (easy to screenshot/copy) – the data is trimmed to the useful parts
+        const txt = JSON.stringify(out.slice(0, 8), (k, v) => (typeof v === 'string' && v.length > 160 ? v.slice(0, 160) + '…' : v));
+        if (!out.length) return m.reply('No comments with pictures found in the first pages.');
+        for (let i = 0; i < txt.length && i < 12000; i += 3000) await client.sendMessage(m.chat, { text: txt.slice(i, i + 3000) }, { quoted: m });
       } catch (e) { m.reply('debug failed: ' + e.message); }
     }
   },

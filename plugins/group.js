@@ -850,11 +850,20 @@ module.exports = [
             const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
             tempFiles.push(filePath);
             payload.groupStatusMessage.sticker = { url: filePath };
-          } else if (m.quoted.text) {
-            // Quoted plain text / link
-            payload.groupStatusMessage.text = statusText
-              ? `${statusText}\n${m.quoted.text}`
-              : m.quoted.text;
+          } else {
+            // Quoted plain text / link (different frameworks store it in different fields)
+            const quotedText =
+              m.quoted.text ||
+              m.quoted.body ||
+              m.quoted.msg?.text ||
+              m.quoted.msg?.conversation ||
+              (typeof m.quoted.msg === 'string' ? m.quoted.msg : '') ||
+              '';
+            if (quotedText) {
+              payload.groupStatusMessage.text = statusText
+                ? `${statusText}\n${quotedText}`
+                : quotedText;
+            }
           }
           if (statusText && !payload.groupStatusMessage.caption && !payload.groupStatusMessage.text) {
             payload.groupStatusMessage.caption = statusText;
@@ -863,16 +872,33 @@ module.exports = [
           payload.groupStatusMessage.text = statusText;
         }
 
+        // Refuse to "send" an empty status
+        const gsm = payload.groupStatusMessage;
+        if (!Object.keys(gsm).length) {
+          console.log('[groupstatus] empty payload. quoted mtype =', m.quoted?.mtype, '| keys =', Object.keys(m.quoted || {}));
+          return m.reply(`❌ Nothing to post. I couldn't read the quoted message (type: ${m.quoted?.mtype || 'unknown'}).`);
+        }
+
+        console.log('[groupstatus] sending to', targetJid, '| fields =', Object.keys(gsm));
+
         // Only quote the command when posting in the same chat it came from
-        await client.sendMessage(targetJid, payload, isPrivate ? {} : { quoted: m });
+        const sent = await client.sendMessage(targetJid, payload, isPrivate ? {} : { quoted: m });
+        console.log('[groupstatus] result id =', sent?.key?.id, '| remoteJid =', sent?.key?.remoteJid);
+
+        if (!sent?.key?.id) {
+          return m.reply('❌ WhatsApp did not return a message id, so the status was probably not posted.');
+        }
 
         if (isPrivate) {
-          await m.reply(`✅ Posted to group status${targetName ? ` in *${targetName}*` : ''}.`);
+          const label = (targetName || '').trim() || targetJid;
+          await m.reply(`📤 Sent to group status in *${label}* (${Object.keys(gsm).join(', ')}).`);
         }
       } catch (err) {
         m.reply(`❌ Error sending group status: ${err.message}`);
       } finally {
-        for (const f of tempFiles) { try { fs.unlinkSync(f); } catch (e) {} }
+        setTimeout(() => {
+          for (const f of tempFiles) { try { fs.unlinkSync(f); } catch (e) {} }
+        }, 60000);
       }
     }
   },

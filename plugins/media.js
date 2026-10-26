@@ -6,6 +6,46 @@ const fetch = require('node-fetch')
 const axios = global.axios || require('axios');
 const { uploadToUguu, upscaleImage } = require('../lib/uploads');
 
+// ── view-once helpers (images, videos AND voice notes / audio) ──
+const unwrapViewOnce = (q) => q?.viewOnceMessageV2Extension?.message || q?.viewOnceMessageV2?.message || q?.viewOnceMessage?.message || q;
+
+async function getMediaBuffer(client, node, type) {
+  const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+  return downloadMediaMessage(
+    { message: { [type]: node } },
+    'buffer',
+    {},
+    { reuploadRequest: client.updateMediaMessage, logger: console }
+  );
+}
+
+// sends whatever view-once media was found (image / video / audio) to `jid`; returns true if something was sent
+async function sendViewOnce(client, m, jid, quotedMessage, label) {
+  const q = unwrapViewOnce(quotedMessage);
+  let sent = false;
+  if (q.imageMessage) {
+    const imageUrl = await client.downloadAndSaveMediaMessage(q.imageMessage);
+    await client.sendMessage(jid, { image: { url: imageUrl }, caption: `${label}\n${q.imageMessage.caption || ''}` }, { quoted: m });
+    sent = true;
+  }
+  if (q.videoMessage) {
+    const videoUrl = await client.downloadAndSaveMediaMessage(q.videoMessage);
+    await client.sendMessage(jid, { video: { url: videoUrl }, caption: `${label}\n${q.videoMessage.caption || ''}` }, { quoted: m });
+    sent = true;
+  }
+  if (q.audioMessage) {
+    const a = q.audioMessage;
+    const buffer = await getMediaBuffer(client, a, 'audioMessage');
+    await client.sendMessage(jid, {
+      audio: buffer,
+      mimetype: a.mimetype || 'audio/ogg; codecs=opus',
+      ptt: !!a.ptt   // keeps voice notes as voice notes
+    }, { quoted: m });
+    sent = true;
+  }
+  return sent;
+}
+
 module.exports = [
 {
   command: ['sticker'],
@@ -470,15 +510,11 @@ module.exports = [
       if (!m.quoted) return m.reply('Quote a viewonce message');
       const quotedMessage = m.msg?.contextInfo?.quotedMessage;
       if (!quotedMessage) return m.reply('Could not find the viewonce message.');
-      if (quotedMessage.imageMessage) {
-        let imageCaption = quotedMessage.imageMessage.caption;
-        let imageUrl = await client.downloadAndSaveMediaMessage(quotedMessage.imageMessage);
-        client.sendMessage(m.chat, { image: { url: imageUrl }, caption: `Retrieved by 𝐁𝐋𝐀𝐂𝐊-𝐌𝐃!\n${imageCaption}` }, { quoted: m });
-      }
-      if (quotedMessage.videoMessage) {
-        let videoCaption = quotedMessage.videoMessage.caption;
-        let videoUrl = await client.downloadAndSaveMediaMessage(quotedMessage.videoMessage);
-        client.sendMessage(m.chat, { video: { url: videoUrl }, caption: `Retrieved by 𝐁𝐋𝐀𝐂𝐊-𝐌𝐃!\n${videoCaption}` }, { quoted: m });
+      try {
+        const ok = await sendViewOnce(client, m, m.chat, quotedMessage, 'Retrieved by 𝐁𝐋𝐀𝐂𝐊-𝐌𝐃!');
+        if (!ok) return m.reply('That is not a view-once image, video or voice note.');
+      } catch (e) {
+        m.reply('Could not retrieve it: ' + e.message);
       }
     }
   },
@@ -493,16 +529,11 @@ module.exports = [
       if (!m.quoted) return;
       if (!Owner) return;
       const quotedMessage = m.msg?.contextInfo?.quotedMessage;
-      if (!quotedMessage) await client.sendMessage(client.user.id, { text: 'Could not find the viewonce message.'});
-      if (quotedMessage.imageMessage) {
-        let imageCaption = quotedMessage.imageMessage.caption;
-        let imageUrl = await client.downloadAndSaveMediaMessage(quotedMessage.imageMessage);
-        client.sendMessage(client.user.id, { image: { url: imageUrl }, caption: `Retrieved by Blackie!\n${imageCaption}` }, { quoted: m });
-      }
-      if (quotedMessage.videoMessage) {
-        let videoCaption = quotedMessage.videoMessage.caption;
-        let videoUrl = await client.downloadAndSaveMediaMessage(quotedMessage.videoMessage);
-        client.sendMessage(client.user.id, { video: { url: videoUrl }, caption: `Retrieved by Blackie!\n${videoCaption}` }, { quoted: m });
+      if (!quotedMessage) return client.sendMessage(client.user.id, { text: 'Could not find the viewonce message.' });
+      try {
+        await sendViewOnce(client, m, client.user.id, quotedMessage, 'Retrieved by Blackie!');
+      } catch (e) {
+        await client.sendMessage(client.user.id, { text: 'Could not retrieve it: ' + e.message });
       }
     }
   },

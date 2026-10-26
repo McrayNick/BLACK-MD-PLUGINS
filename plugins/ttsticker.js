@@ -304,11 +304,46 @@ module.exports = [
         }
         if (!sent) return m.reply(`❌ Found the comment stickers but could not convert them.\nReason: ${String(lastErr).slice(0, 150)}`);
         await client.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-        await m.reply(`✅ Sent ${sent} sticker${sent === 1 ? '' : 's'} (checked ${commentStickers.scanned || 0} comments; stopped: ${commentStickers.info}) • ttsticker v12`);
+        await m.reply(`✅ Sent ${sent} sticker${sent === 1 ? '' : 's'} (checked ${commentStickers.scanned || 0} comments; stopped: ${commentStickers.info}) • ttsticker v13`);
       } catch (e) {
         console.error('[ttsticker]', e.message);
         m.reply(`❌ Could not get the stickers: ${String(e.message).slice(0, 120)}`);
       }
+    }
+  },
+  {
+    command: ['ttdebug'],
+    aliases: ['ttstickerdebug'],
+    description: 'Debug: dump the picture/sticker data of TikTok comments to a file',
+    category: 'downloads',
+    handler: async (client, m, { text }) => {
+      const link = ((text || '').match(/https?:\/\/[^\s]*tiktok\.com[^\s]*/i) || [])[0];
+      if (!link) return m.reply('Send: .ttdebug <TikTok video link>');
+      try {
+        const out = []; let cursor = 0;
+        for (let page = 0; page < 6 && out.length < 15; page++) {
+          let d;
+          for (let t = 0; t < 5; t++) {
+            try { d = (await axios.get(`https://www.tikwm.com/api/comment/list/?url=${encodeURIComponent(link)}&count=50&cursor=${cursor}`, { timeout: 30000, headers: { 'User-Agent': UA } })).data; }
+            catch (e) { d = { code: -1, msg: String(e.message) }; }
+            if (d?.code !== 0 && /limit|second/i.test(String(d?.msg))) { await new Promise(r => setTimeout(r, 1500)); continue; }
+            break;
+          }
+          const list = d?.data?.comments || [];
+          if (!list.length) break;
+          for (const c of list) {
+            const has = JSON.stringify(c, (k, v) => (/^user$/i.test(k) ? undefined : v));
+            if (/https?:\/\//.test(has) && out.length < 15) {
+              const copy = JSON.parse(has);
+              out.push(copy);
+            }
+          }
+          cursor = Number(d?.data?.cursor) || cursor + list.length;
+          await new Promise(r => setTimeout(r, 1200));
+        }
+        const body = Buffer.from(JSON.stringify({ note: 'comments that contain any link (user info removed)', comments: out }, null, 1));
+        await client.sendMessage(m.chat, { document: body, mimetype: 'application/json', fileName: 'tt-comments-debug.json' }, { quoted: m });
+      } catch (e) { m.reply('debug failed: ' + e.message); }
     }
   },
   {

@@ -11,7 +11,7 @@ module.exports = [
   command: ['sticker'],
   aliases: ['stik', 's', 'stikpack'],
   description: 'Create sticker from quoted image or video',
-  category: 'Sticker',
+  category: 'media',
 
   handler: async (
     client,

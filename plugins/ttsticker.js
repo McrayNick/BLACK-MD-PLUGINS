@@ -28,7 +28,7 @@ function ffmpegBin() {
 
 // how many comment stickers to send when no number is given, and the most allowed
 const DEFAULT_STICKERS = 20;
-const MAX_STICKERS = 30;
+const MAX_STICKERS = 100;
 
 const UA = 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36';
 
@@ -188,9 +188,14 @@ async function commentStickers(link, want) {
   let cursor = 0, total = 0, stop = 'reached the limit', apiTotal = 0, emptyPages = 0;
   for (let page = 0; page < 120 && found.length < want; page++) {
     let d;
-    try {
-      d = (await axios.get(`https://www.tikwm.com/api/comment/list/?url=${encodeURIComponent(link)}&count=50&cursor=${cursor}`, { timeout: 30000, headers: { 'User-Agent': UA } })).data;
-    } catch (e) { stop = 'request failed: ' + String(e.response?.status || e.message).slice(0, 40); break; }
+    // tikwm's free API allows 1 request per second: wait and retry when it says so
+    for (let tryNo = 0; tryNo < 6; tryNo++) {
+      try {
+        d = (await axios.get(`https://www.tikwm.com/api/comment/list/?url=${encodeURIComponent(link)}&count=50&cursor=${cursor}`, { timeout: 30000, headers: { 'User-Agent': UA } })).data;
+      } catch (e) { d = { code: -1, msg: 'request failed: ' + String(e.response?.status || e.message).slice(0, 40) }; }
+      if (d?.code !== 0 && /limit|too many|second/i.test(String(d?.msg))) { await new Promise(r => setTimeout(r, 1500)); continue; }
+      break;
+    }
     const list = d?.data?.comments || [];
     apiTotal = Number(d?.data?.total) || apiTotal;
     if (!list.length) { stop = d?.msg && d.code !== 0 ? String(d.msg).slice(0, 50) : 'no more comments'; break; }
@@ -212,7 +217,7 @@ async function commentStickers(link, want) {
     if (fresh === 0) { if (++emptyPages >= 2) { stop = 'no new comments'; break; } } else emptyPages = 0;
     if (hasMore === false || hasMore === 0) { stop = 'end of comments'; break; }
     cursor = next && next !== cursor ? next : cursor + list.length;
-    await new Promise(r => setTimeout(r, 350));
+    await new Promise(r => setTimeout(r, 1200));
   }
   commentStickers.scanned = total;
   commentStickers.info = `${stop}${apiTotal ? `, video has ~${apiTotal} comments` : ''}`;
@@ -299,7 +304,7 @@ module.exports = [
         }
         if (!sent) return m.reply(`❌ Found the comment stickers but could not convert them.\nReason: ${String(lastErr).slice(0, 150)}`);
         await client.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-        await m.reply(`✅ Sent ${sent} sticker${sent === 1 ? '' : 's'} (checked ${commentStickers.scanned || 0} comments; stopped: ${commentStickers.info}) • ttsticker v10`);
+        await m.reply(`✅ Sent ${sent} sticker${sent === 1 ? '' : 's'} (checked ${commentStickers.scanned || 0} comments; stopped: ${commentStickers.info}) • ttsticker v12`);
       } catch (e) {
         console.error('[ttsticker]', e.message);
         m.reply(`❌ Could not get the stickers: ${String(e.message).slice(0, 120)}`);

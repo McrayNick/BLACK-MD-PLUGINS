@@ -94,7 +94,7 @@ function runFfmpeg(args) {
   });
 }
 
-const SQUARE = 'scale=512:512:force_original_aspect_ratio=decrease:flags=lanczos,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000';
+const SQUARE = 'scale=512:512:force_original_aspect_ratio=increase:flags=lanczos,crop=512:512,format=rgba'; // fills the whole sticker, no empty space
 
 // WhatsApp wants animated stickers around 500 KB: try lighter settings until it fits
 const ATTEMPTS = [
@@ -171,15 +171,16 @@ const seenKeys = new Set();
 async function commentStickers(link, want) {
   const found = [];
   seenKeys.clear();
-  for (let cursor = 0; cursor <= 500 && found.length < want; cursor += 50) {
+  let cursor = 0, total = 0;
+  for (let page = 0; page < 40 && found.length < want; page++) {
     let d;
     try {
       d = (await axios.get(`https://www.tikwm.com/api/comment/list/?url=${encodeURIComponent(link)}&count=50&cursor=${cursor}`, { timeout: 30000, headers: { 'User-Agent': UA } })).data;
     } catch (_) { break; }
     const list = d?.data?.comments || [];
     if (!list.length) break;
+    total += list.length;
     for (const c of list) {
-      // the sticker / picture fields of a comment (avatars and emojis are skipped)
       Object.keys(c).forEach(k => seenKeys.add(k));
       const imgs = pickImages(Object.keys(c).filter(k => /sticker|image|img|pic|photo/i.test(k)).map(k => c[k]).filter(Boolean));
       if (!imgs.length) continue;
@@ -187,7 +188,12 @@ async function commentStickers(link, want) {
       if (!found.some(f => f.url === best.url)) found.push({ ...best, alt: imgs.filter(i => i.url !== best.url).map(i => i.url) });
       if (found.length >= want) break;
     }
+    const next = Number(d?.data?.cursor);
+    if (!d?.data?.hasMore || !next || next === cursor) break;
+    cursor = next;
+    await new Promise(r => setTimeout(r, 400));
   }
+  commentStickers.scanned = total;
   return found;
 }
 
@@ -197,7 +203,7 @@ async function sharpSticker(buf) {
   let best = null;
   for (const q of [60, 40, 25, 15]) {
     const out = await sharp(buf, { animated: true, pages: -1, limit: 300 })
-      .resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .resize(512, 512, { fit: 'cover', position: 'centre' })
       .webp({ quality: q, effort: 4 }).toBuffer();
     if (!best || out.length < best.length) best = out;
     if (out.length <= 500 * 1024) return out;
@@ -211,13 +217,14 @@ async function anyToSticker(buf) {
   const isGif = buf.slice(0, 4).toString('latin1') === 'GIF8';
   const errs = [];
 
-  try { return await sharpSticker(buf); } catch (e) { errs.push('sharp: ' + e.message); }
+  // animated webp: ffmpeg cannot read it, so keep it as it is (like stickerlite does)
+  if (isWebp && buf.includes('ANIM') && buf.length <= 1000 * 1024) return buf;
 
-  // a webp from TikTok is already sticker-ready: send it as it is
-  if (isWebp && buf.length <= 1000 * 1024) return buf;
+  try { return await sharpSticker(buf); } catch (e) { errs.push('sharp: ' + e.message); }
 
   const animated = isGif || buf.slice(0, 64).includes('ftyp');
   try { return await toWebp(buf, animated); } catch (e) { errs.push('ffmpeg(' + ffmpegBin() + '): ' + e.message); }
+  if (isWebp && buf.length <= 1000 * 1024) return buf;
   throw new Error(errs.join(' | '));
 }
 
@@ -235,7 +242,7 @@ module.exports = [
       try {
         await client.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
         const items = await commentStickers(link, n);
-        if (!items.length) return m.reply(`❌ No sticker comments found on that video (or comments could not be loaded).\nFields seen: ${[...seenKeys].join(', ').slice(0, 300) || 'none (no comments returned)'}`);
+        if (!items.length) return m.reply(`❌ No sticker comments found in ${commentStickers.scanned || 0} comments checked (or comments could not be loaded).\nFields seen: ${[...seenKeys].join(', ').slice(0, 300) || 'none (no comments returned)'}`);
         let sent = 0, lastErr = '';
         for (const it of items) {
           try {
@@ -271,6 +278,7 @@ module.exports = [
         }
         if (!sent) return m.reply(`❌ Found the comment stickers but could not convert them.\nReason: ${String(lastErr).slice(0, 150)}`);
         await client.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+        if (sent < n) await m.reply(`✅ Sent ${sent} sticker${sent === 1 ? '' : 's'} — that is all I found in the ${commentStickers.scanned || 0} comments I could load.`);
       } catch (e) {
         console.error('[ttsticker]', e.message);
         m.reply(`❌ Could not get the stickers: ${String(e.message).slice(0, 120)}`);

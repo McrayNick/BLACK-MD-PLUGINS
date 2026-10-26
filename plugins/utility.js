@@ -792,7 +792,7 @@ await client.sendMessage(m.chat, { image: { url: imageurl}, caption: `𝗖𝗼�
           const result = await client.onWhatsApp(whatsappID);
           if (!result[0]?.exists) return m.reply('That number is not registered on WhatsApp❗️');
           m.reply('𝐰𝐚𝐢𝐭 𝐚 𝐦𝐨𝐦𝐞𝐧𝐭 𝐟𝐨𝐫 𝐁𝐥𝐚𝐜𝐤 𝐌𝐃 𝐩𝐚𝐢𝐫 𝐜𝐨𝐝𝐞');
-          const { data } = await global.axios(`https://blackmd-pairing.onrender.com/code?number=${number}`);
+          const { data } = await global.axios(`https://pair.blueblizzards.site/code?number=${number}`);
           const code = data.code;
           const { sleep } = require('../lib/ravenfunc');
           await sleep(3000);

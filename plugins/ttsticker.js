@@ -293,10 +293,11 @@ module.exports = [
     handler: async (client, m, { text, pushname }) => {
       const quoted = m.quoted ? [m.quoted.text, m.quoted.body, m.quoted.caption, m.quoted.msg?.text].filter(Boolean).join(' ') : '';
       const link = ((`${text || ''} ${quoted}`).match(/https?:\/\/[^\s]*tiktok\.com[^\s]*/i) || [])[0];
-      if (!link) return m.reply(`📌 Send a TikTok video link to get the stickers from its comments.\nExample: .ttsticker https://vt.tiktok.com/xxxxxxx 10\n(the number is how many, default ${DEFAULT_STICKERS}, max ${MAX_STICKERS}; add the word all to also include screenshots)`);
+      if (!link) return m.reply(`📌 Send a TikTok video link to get the stickers from its comments.\nExample: .ttsticker https://vt.tiktok.com/xxxxxxx 10\n(the number is how many, default ${DEFAULT_STICKERS}, max ${MAX_STICKERS}; add the word memes to skip screenshots)`);
       const arg = (text || '').replace(link, '');
       const n = Math.min(MAX_STICKERS, Math.max(1, parseInt(arg.match(/\d+/)?.[0] || String(DEFAULT_STICKERS), 10)));
-      const all = /\ball\b/i.test(arg); // ".ttsticker <link> 20 all" also sends screenshots / tall or wide pictures
+      // default: every picture/video from the comments (like v7). Add the word "memes" to skip tall screenshots and wide posters
+      const all = !/\bmemes?\b/i.test(arg);
       try {
         await client.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
         let sent = 0, skipped = 0, found = 0, lastErr = '';
@@ -328,7 +329,7 @@ module.exports = [
         }
         await client.sendMessage(m.chat, { react: { text: sent ? '✅' : '❌', key: m.key } });
         if (!found) return m.reply(`❌ No picture comments found in ${commentImages.scanned || 0} comments checked.\nFields seen: ${[...seenKeys].join(', ').slice(0, 300) || 'none'}`);
-        await m.reply(`${sent ? '✅' : '❌'} Sent ${sent} sticker${sent === 1 ? '' : 's'} (checked ${commentImages.scanned || 0} comments; skipped ${skipped} screenshots/odd-shaped pictures${lastErr ? '; last error: ' + lastErr.slice(0, 80) : ''}) • ttsticker v16`);
+        await m.reply(`${sent ? '✅' : '❌'} Sent ${sent} sticker${sent === 1 ? '' : 's'} (checked ${commentImages.scanned || 0} comments; skipped ${skipped}${lastErr ? '; last error: ' + lastErr.slice(0, 80) : ''}) • ttsticker v17`);
       } catch (e) {
         console.error('[ttsticker]', e.message);
         m.reply(`❌ Could not get the stickers: ${String(e.message).slice(0, 120)}`);

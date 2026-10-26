@@ -278,7 +278,7 @@ module.exports = [
         }
         if (!sent) return m.reply(`❌ Found the comment stickers but could not convert them.\nReason: ${String(lastErr).slice(0, 150)}`);
         await client.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-        if (sent < n) await m.reply(`✅ Sent ${sent} sticker${sent === 1 ? '' : 's'} — that is all I found in the ${commentStickers.scanned || 0} comments I could load.`);
+        await m.reply(`✅ Sent ${sent} sticker${sent === 1 ? '' : 's'} (checked ${commentStickers.scanned || 0} comments) • ttsticker v7`);
       } catch (e) {
         console.error('[ttsticker]', e.message);
         m.reply(`❌ Could not get the stickers: ${String(e.message).slice(0, 120)}`);

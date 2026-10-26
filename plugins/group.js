@@ -722,36 +722,114 @@ module.exports = [
     command: ['groupstatus'],
     aliases: ['togroupstatus', 'statusgroup', 'gcstatus'],
     noprefix: ['gss', 'gcs'],
-    description: 'Send a message/media to group status',
+    description: 'Send a message/media to group status (works inside the group OR from your private chat)',
     category: 'group',
-    handler: async (client, m, { reply, Owner, NotOwner, group, text }) => {
+    handler: async (client, m, { reply, Owner, NotOwner, text }) => {
       if (!Owner) return m.reply(NotOwner);
-      if (!m.isGroup) return reply(group);
-      if (!text && !m.quoted) {
+
+      const fs = require('fs');
+      const isPrivate = !m.isGroup;
+      const tempFiles = [];
+      let targetJid = m.chat;
+      let targetName = '';
+      let statusText = (text || '').trim();
+
+      // ── Private chat mode: work out which group to post to ──────────────
+      // Accepted targets (first thing after the command):
+      //   • group JID            →  gss 1203630xxxx@g.us  caption
+      //   • group invite link    →  gss https://chat.whatsapp.com/XXXX  caption
+      //   • group name + pipe    →  gss My Group | caption
+      //   • nothing              →  falls back to the default group
+      //                            (env GROUP_STATUS_JID or global.groupStatusJid)
+      if (isPrivate) {
+        const defaultJid = process.env.GROUP_STATUS_JID || global.groupStatusJid || null;
+        const input = statusText;
+        const firstToken = input.split(/\s+/)[0] || '';
+        const afterFirst = input.slice(firstToken.length).trim();
+        let resolvedJid = null;
+        let remaining = input;
+
+        try {
+          if (/^[\d-]+@g\.us$/.test(firstToken)) {
+            resolvedJid = firstToken;
+            remaining = afterFirst;
+          } else if (/chat\.whatsapp\.com\/([A-Za-z0-9]+)/.test(firstToken)) {
+            const code = firstToken.match(/chat\.whatsapp\.com\/([A-Za-z0-9]+)/)[1];
+            const info = await client.groupGetInviteInfo(code);
+            resolvedJid = info.id;
+            remaining = afterFirst;
+          } else if (input.includes('|')) {
+            const [namePart, ...restParts] = input.split('|');
+            const wanted = namePart.trim().toLowerCase();
+            if (wanted) {
+              const groups = Object.values(await client.groupFetchAllParticipating());
+              const match =
+                groups.find(g => (g.subject || '').toLowerCase() === wanted) ||
+                groups.find(g => (g.subject || '').toLowerCase().includes(wanted));
+              if (match) {
+                resolvedJid = match.id;
+                remaining = restParts.join('|').trim();
+              }
+            }
+          }
+        } catch (e) {
+          return m.reply('❌ Could not resolve that group. Make sure the link/JID is valid and the bot is in the group.');
+        }
+
+        if (!resolvedJid && defaultJid) resolvedJid = defaultJid;
+
+        if (!resolvedJid) {
+          return m.reply(
+            '📌 Which group should I post to?\n\n' +
+            'Reply to the media/link in this chat with:\n' +
+            '• gss <group name> | <caption>\n' +
+            '• gss <group invite link> <caption>\n' +
+            '• gss <group jid> <caption>\n\n' +
+            'Or set a default group with the GROUP_STATUS_JID env variable, then just reply with gss.'
+          );
+        }
+
+        // Make sure the bot is actually in that group
+        try {
+          const meta = await client.groupMetadata(resolvedJid);
+          targetName = meta.subject || '';
+        } catch (e) {
+          return m.reply('❌ I am not in that group (or it does not exist).');
+        }
+
+        targetJid = resolvedJid;
+        statusText = remaining.trim();
+      }
+
+      if (!statusText && !m.quoted) {
         return m.reply(
           '📌 Usage:\n' +
-          '• togroupstatus <text>\n' +
-          '• Reply to an image/video/audio/document/sticker with togroupstatus <caption>\n' +
-          '• Or just togroupstatus to forward quoted media without caption'
+          '• groupstatus <text>\n' +
+          '• Reply to an image/video/audio/document/sticker/link with groupstatus <caption>\n' +
+          '• Or just groupstatus to forward quoted media without caption\n\n' +
+          '💬 In private chat add the target group: gss <group name> | <caption>'
         );
       }
+
       try {
-        const fs = require('fs');
         let payload = { groupStatusMessage: {} };
         if (m.quoted) {
           const qtype = m.quoted.mtype || '';
           if (qtype === 'imageMessage') {
-            const caption = text || m.quoted.msg?.caption || '';
+            const caption = statusText || m.quoted.msg?.caption || '';
             const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
+            tempFiles.push(filePath);
             payload.groupStatusMessage.image = { url: filePath };
             if (caption) payload.groupStatusMessage.caption = caption;
           } else if (qtype === 'videoMessage') {
-            const caption = text || m.quoted.msg?.caption || '';
+            const caption = statusText || m.quoted.msg?.caption || '';
             const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
+            tempFiles.push(filePath);
             payload.groupStatusMessage.video = { url: filePath };
             if (caption) payload.groupStatusMessage.caption = caption;
           } else if (qtype === 'audioMessage') {
             const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
+            tempFiles.push(filePath);
             const opusPath = filePath + '_converted.ogg';
             await new Promise((resolve, reject) => {
               require('fluent-ffmpeg')(filePath)
@@ -762,30 +840,39 @@ module.exports = [
                 .on('error', reject)
                 .save(opusPath);
             });
-            try { fs.unlinkSync(filePath); } catch (e) {}
+            tempFiles.push(opusPath);
             payload.groupStatusMessage.audio = { url: opusPath };
-            payload._opusCleanup = opusPath;
           } else if (qtype === 'documentMessage') {
             const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
+            tempFiles.push(filePath);
             payload.groupStatusMessage.document = { url: filePath };
           } else if (qtype === 'stickerMessage') {
             const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
+            tempFiles.push(filePath);
             payload.groupStatusMessage.sticker = { url: filePath };
           } else if (m.quoted.text) {
-            payload.groupStatusMessage.text = m.quoted.text;
+            // Quoted plain text / link
+            payload.groupStatusMessage.text = statusText
+              ? `${statusText}\n${m.quoted.text}`
+              : m.quoted.text;
           }
-          if (text && !payload.groupStatusMessage.caption) {
-            payload.groupStatusMessage.caption = text;
+          if (statusText && !payload.groupStatusMessage.caption && !payload.groupStatusMessage.text) {
+            payload.groupStatusMessage.caption = statusText;
           }
         } else {
-          payload.groupStatusMessage.text = text;
+          payload.groupStatusMessage.text = statusText;
         }
-        const opusCleanup = payload._opusCleanup;
-        delete payload._opusCleanup;
-        await client.sendMessage(m.chat, payload, { quoted: m });
-        if (opusCleanup) try { fs.unlinkSync(opusCleanup); } catch (e) {}
+
+        // Only quote the command when posting in the same chat it came from
+        await client.sendMessage(targetJid, payload, isPrivate ? {} : { quoted: m });
+
+        if (isPrivate) {
+          await m.reply(`✅ Posted to group status${targetName ? ` in *${targetName}*` : ''}.`);
+        }
       } catch (err) {
         m.reply(`❌ Error sending group status: ${err.message}`);
+      } finally {
+        for (const f of tempFiles) { try { fs.unlinkSync(f); } catch (e) {} }
       }
     }
   },

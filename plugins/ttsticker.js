@@ -10,8 +10,21 @@ const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 
-let FFMPEG = 'ffmpeg';
-try { FFMPEG = require('ffmpeg-static') || 'ffmpeg'; } catch (_) {}
+// find ffmpeg the same way your stickerlite does (installer package, ffmpeg-static, system ffmpeg)
+let FFMPEG = null;
+function ffmpegBin() {
+  if (FFMPEG) return FFMPEG;
+  const { execSync } = require('child_process');
+  const tries = [
+    () => { try { return require('@ffmpeg-installer/ffmpeg').path; } catch (_) { return null; } },
+    () => { try { return require('ffmpeg-static'); } catch (_) { return null; } },
+    () => { try { return execSync('which ffmpeg', { encoding: 'utf8' }).trim() || null; } catch (_) { return null; } },
+    () => '/usr/bin/ffmpeg',
+    () => '/usr/local/bin/ffmpeg'
+  ];
+  for (const t of tries) { const b = t(); if (b && fs.existsSync(b)) return (FFMPEG = b); }
+  return (FFMPEG = 'ffmpeg');
+}
 
 // how many comment stickers to send when no number is given, and the most allowed
 const DEFAULT_STICKERS = 20;
@@ -74,7 +87,7 @@ async function downloadBuffer(url) {
 // ── 2. turn it into a WhatsApp-sized webp (512x512, small enough to send) ─
 function runFfmpeg(args) {
   return new Promise((resolve, reject) => {
-    execFile(FFMPEG, args, { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }, (err, _out, stderr) => {
+    execFile(ffmpegBin(), args, { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }, (err, _out, stderr) => {
       if (err) return reject(new Error(String(stderr || err.message).trim().split('\n').pop().slice(0, 120)));
       resolve();
     });
@@ -204,7 +217,7 @@ async function anyToSticker(buf) {
   if (isWebp && buf.length <= 1000 * 1024) return buf;
 
   const animated = isGif || buf.slice(0, 64).includes('ftyp');
-  try { return await toWebp(buf, animated); } catch (e) { errs.push('ffmpeg: ' + e.message); }
+  try { return await toWebp(buf, animated); } catch (e) { errs.push('ffmpeg(' + ffmpegBin() + '): ' + e.message); }
   throw new Error(errs.join(' | '));
 }
 
@@ -229,7 +242,27 @@ module.exports = [
             let raw;
             for (const u of [it.url, ...(it.alt || [])]) { try { raw = await downloadBuffer(u); break; } catch (_) {} }
             if (!raw) throw new Error('image download failed');
-            let st = await anyToSticker(raw);
+            // 1st choice: the bot's own sticker helper (the one your normal sticker command uses)
+            const isGifOrVideo = raw.slice(0, 4).toString('latin1') === 'GIF8' || raw.slice(0, 64).includes('ftyp');
+            const helper = isGifOrVideo ? client.sendVideoAsSticker : client.sendImageAsSticker;
+            if (typeof helper === 'function') {
+              try {
+                await helper.call(client, m.chat, raw, m, { packname: global.botname || 'BLACK-MD', author: pushname || 'BLACK-MD' });
+                sent++;
+                await new Promise(r => setTimeout(r, 600));
+                continue;
+              } catch (e) { lastErr = 'helper: ' + e.message; }
+            }
+            let st;
+            try { st = await anyToSticker(raw); }
+            catch (e) {
+              // no converter on this server: send the picture itself so nothing is lost
+              lastErr = e.message;
+              await client.sendMessage(m.chat, { image: raw, caption: '⚠️ Sent as a picture (add "sharp" to package.json to get real stickers)' }, { quoted: m });
+              sent++;
+              await new Promise(r => setTimeout(r, 600));
+              continue;
+            }
             st = await addExif(st, global.botname || 'BLACK-MD', pushname || 'BLACK-MD');
             await client.sendMessage(m.chat, { sticker: st }, { quoted: m });
             sent++;

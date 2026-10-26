@@ -154,8 +154,10 @@ function pickImages(node, out = [], depth = 0) {
   return out;
 }
 
+const seenKeys = new Set();
 async function commentStickers(link, want) {
   const found = [];
+  seenKeys.clear();
   for (let cursor = 0; cursor <= 500 && found.length < want; cursor += 50) {
     let d;
     try {
@@ -164,8 +166,9 @@ async function commentStickers(link, want) {
     const list = d?.data?.comments || [];
     if (!list.length) break;
     for (const c of list) {
-      // only the sticker fields of a comment (not photos, avatars or emojis)
-      const imgs = pickImages(Object.keys(c).filter(k => /sticker/i.test(k)).map(k => c[k]).filter(Boolean));
+      // the sticker / picture fields of a comment (avatars and emojis are skipped)
+      Object.keys(c).forEach(k => seenKeys.add(k));
+      const imgs = pickImages(Object.keys(c).filter(k => /sticker|image|img|pic|photo/i.test(k)).map(k => c[k]).filter(Boolean));
       if (!imgs.length) continue;
       const best = imgs.find(i => i.anim) || imgs[0];
       if (!found.some(f => f.url === best.url)) found.push({ ...best, alt: imgs.filter(i => i.url !== best.url).map(i => i.url) });
@@ -213,7 +216,7 @@ module.exports = [
       try {
         await client.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
         const items = await commentStickers(link, n);
-        if (!items.length) return m.reply('❌ No sticker/picture comments found on that video (or comments could not be loaded).');
+        if (!items.length) return m.reply(`❌ No sticker comments found on that video (or comments could not be loaded).\nFields seen: ${[...seenKeys].join(', ').slice(0, 300) || 'none (no comments returned)'}`);
         let sent = 0, lastErr = '';
         for (const it of items) {
           try {

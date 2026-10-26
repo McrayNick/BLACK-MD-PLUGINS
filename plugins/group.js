@@ -881,17 +881,30 @@ module.exports = [
 
         console.log('[groupstatus] sending to', targetJid, '| fields =', Object.keys(gsm));
 
-        // Only quote the command when posting in the same chat it came from
-        const sent = await client.sendMessage(targetJid, payload, isPrivate ? {} : { quoted: m });
-        console.log('[groupstatus] result id =', sent?.key?.id, '| remoteJid =', sent?.key?.remoteJid);
+        // Same call shape the original (working) in-group command used: always pass `quoted`.
+        // In private mode we can't quote the private message (it would reference the wrong chat
+        // and could expose its content), so we pass a harmless blank stub inside the target group.
+        const sendOpts = isPrivate
+          ? {
+              quoted: {
+                key: {
+                  remoteJid: targetJid,
+                  fromMe: true,
+                  id: 'GS' + Date.now().toString(16).toUpperCase()
+                },
+                message: { conversation: '' }
+              }
+            }
+          : { quoted: m };
 
-        if (!sent?.key?.id) {
-          return m.reply('❌ WhatsApp did not return a message id, so the status was probably not posted.');
-        }
+        // NOTE: this fork's groupStatusMessage send does not return a message id even when
+        // the status is posted, so success = "no error thrown".
+        await client.sendMessage(targetJid, payload, sendOpts);
+        console.log('[groupstatus] sent OK to', targetJid);
 
         if (isPrivate) {
-          const label = (targetName || '').trim() || targetJid;
-          await m.reply(`📤 Sent to group status in *${label}* (${Object.keys(gsm).join(', ')}).`);
+          const label = (targetName || '').trim() || 'the group';
+          await m.reply(`✅ Posted to group status in *${label}*.`);
         }
       } catch (err) {
         m.reply(`❌ Error sending group status: ${err.message}`);

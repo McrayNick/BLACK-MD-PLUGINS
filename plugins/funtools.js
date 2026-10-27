@@ -508,9 +508,12 @@ module.exports = [
     aliases: ['musiccard', 'songcard'],
     description: 'Make a music cover card for a song (.coverart <song name>)',
     category: 'media',
-    handler: async (client, m, { text }) => {
-      const query = (text || quotedText(m) || '').trim();
-      if (!query) return m.reply('🎵 Send a song name: *.coverart Hold my hand Bridget Blue*');
+    handler: async (client, m, ctx) => {
+      let query = (ctx.text || quotedText(m) || '').trim();
+      // ".coverart -c <song>" = card only, without the song
+      const cardOnly = /^-c\b/i.test(query);
+      if (cardOnly) query = query.replace(/^-c\b\s*/i, '');
+      if (!query) return m.reply('🎵 Send a song name: *.coverart Hold my hand Bridget Blue*\n_(add -c for the card only: .coverart -c <song>)_');
       try {
         await m.reply('🎵 _Creating cover art..._');
         const yts = require('yt-search');
@@ -522,7 +525,16 @@ module.exports = [
         const title = String(v.title).replace(/\s*[\(\[].*?(official|video|audio|lyrics|mv|hd).*?[\)\]]/gi, '').trim() || v.title;
         const png = await makeCoverArt(Buffer.from(r.data), title, v.author?.name || 'Unknown artist');
         await client.sendMessage(m.chat, { image: png, caption: `🎵 *${title}*\n👤 ${v.author?.name || ''}\n⏱️ ${v.timestamp || ''}` }, { quoted: m });
-      } catch (e) { m.reply('❌ Could not make the cover art: ' + e.message); }
+      } catch (e) { return m.reply('❌ Could not make the cover art: ' + e.message); }
+
+      // then send the song itself, using the bot's own .play (the same verified download as always)
+      if (!cardOnly) {
+        try {
+          const play = require('./downloads').find(c => (c.command || []).includes('play'));
+          if (!play) throw new Error('.play not found');
+          await play.handler(client, m, { ...ctx, text: query });
+        } catch (e) { m.reply('⚠️ Cover card sent, but I could not fetch the song: ' + String(e.message).slice(0, 80) + '\nTry *.play ' + query + '*'); }
+      }
     }
   },
 

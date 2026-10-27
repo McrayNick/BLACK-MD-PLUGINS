@@ -137,14 +137,43 @@ async function runAudioFx(buf, mime, af) {
   } finally { rmDir(dir); }
 }
 
+// a video with the effect applied to its sound; the picture is kept as it is
+// (vspeed > 0 also changes the picture speed so sound and picture stay together, e.g. nightcore)
+async function runVideoSoundFx(buf, mime, af, vspeed) {
+  const dir = makeDir('vfx');
+  try {
+    const inFile = path.join(dir, `in.${extFor(mime)}`);
+    fs.writeFileSync(inFile, buf);
+    const out = path.join(dir, 'out.mp4');
+    const vArgs = vspeed
+      ? ['-vf', `setpts=PTS/${vspeed},scale=trunc(iw/2)*2:trunc(ih/2)*2`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p']
+      : ['-c:v', 'copy'];
+    try {
+      await ff(['-y', '-i', inFile, '-map', '0:v:0', '-map', '0:a:0', ...vArgs, '-af', af, '-c:a', 'aac', '-b:a', '160k', '-movflags', 'faststart', out], 180000);
+    } catch (e) {
+      if (!vspeed) { // some clips can't be copied as they are: re-encode instead
+        await ff(['-y', '-i', inFile, '-map', '0:v:0', '-map', '0:a:0', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p', '-af', af, '-c:a', 'aac', '-b:a', '160k', '-movflags', 'faststart', out], 180000);
+      } else throw e;
+    }
+    return fs.readFileSync(out);
+  } finally { rmDir(dir); }
+}
+
 // shared body for commands that take audio or a video's sound
-async function audioEffect(client, m, af, label) {
+async function audioEffect(client, m, af, label, vspeed = 0) {
   const t = mediaTarget(m);
   const mime = mimeOf(t);
   if (!t || !/audio|video/.test(mime)) return m.reply(`🎧 Reply to an *audio*, *voice note* or *video* with *${label}*`);
   try {
     await m.reply('🎛️ _Applying effect..._');
     const buf = await downloadTarget(client, t);
+    if (/video/.test(mime)) {
+      // video in -> video out, with the effect on its sound
+      let out;
+      try { out = await runVideoSoundFx(buf, mime, af, vspeed); }
+      catch (e) { return m.reply('❌ Could not apply the effect. The video may have no sound.'); }
+      return client.sendMessage(m.chat, { video: out, mimetype: 'video/mp4', caption: `🎛️ ${label.replace('.', '')} effect` }, { quoted: m });
+    }
     const out = await runAudioFx(buf, mime, af);
     await client.sendMessage(m.chat, { audio: out, mimetype: 'audio/mpeg', ptt: false, fileName: 'audio.mp3' }, { quoted: m });
   } catch (e) { m.reply('❌ Failed: ' + e.message); }
@@ -276,7 +305,7 @@ module.exports = [
     category: 'media',
     handler: async (client, m) => {
       ensureRecorder(client);
-      return audioEffect(client, m, 'aresample=44100,asetrate=55125,aresample=44100', '.nightcore');
+      return audioEffect(client, m, 'aresample=44100,asetrate=55125,aresample=44100', '.nightcore', 1.25);
     }
   },
 
@@ -287,7 +316,7 @@ module.exports = [
     category: 'media',
     handler: async (client, m) => {
       ensureRecorder(client);
-      return audioEffect(client, m, 'aresample=44100,asetrate=35280,aresample=44100,aecho=0.8:0.88:60:0.35', '.slow');
+      return audioEffect(client, m, 'aresample=44100,asetrate=35280,aresample=44100,aecho=0.8:0.88:60:0.35', '.slow', 0.8);
     }
   },
 

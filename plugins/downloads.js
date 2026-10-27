@@ -1,5 +1,6 @@
 'use strict';
 
+const { ytmp3 } = require('../lib/video');
 const axios = global.axios || require('axios');
 const fetch = require('node-fetch');
 const yts = require('yt-search');
@@ -546,9 +547,6 @@ module.exports = [
   // ═══════════════════════════════════════════════════════════
   // YOUTUBE VIDEO
   // ═══════════════════════════════════════════════════════════
-
-const { ytmp3 } = require('../lib/video');
-const yts = require('yt-search');
 
 {
   command: ['video'],

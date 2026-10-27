@@ -547,53 +547,63 @@ module.exports = [
   // YOUTUBE VIDEO
   // ═══════════════════════════════════════════════════════════
 
-  {
-    command: ['video'],
-    aliases: ['ytv', 'ytmp4'],
-    description: 'Download YouTube video (MP4)',
-    category: 'downloads',
-    handler: async (client, m, { text, api }) => {
-      if (!text) return m.reply('🎬 Provide a video name or YouTube link!\nEg:- *ytv Blinding Lights*');
-      try {
-        await client.sendMessage(m.chat, { react: { text: '🎬', key: m.key } });
-        let msg = await client.sendMessage(m.chat, { text: `🔍 Searching *${text}*...` }, { quoted: m });
+const { ytmp3 } = require('../lib/video');
+const yts = require('yt-search');
 
-        let videoUrl, videoTitle;
-        if (text.match(/(youtube\.com|youtu\.be)/i)) {
-          videoUrl = text.trim().split(/\s+/).find(w => /youtube\.com|youtu\.be/i.test(w)) || text.trim();
-          const vid = (videoUrl.match(/(?:youtu\.be\/|[?&]v=|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})/) || [])[1];
-          const info = vid ? await yts({ videoId: vid }).catch(() => null) : null;
-          videoTitle = info?.title || 'YouTube Video';
-        } else {
-          const search = await yts(text);
-          const video = search.videos[0];
-          if (!video) return client.sendMessage(m.chat, { text: `❌ No results found for: *${text}*`, edit: msg.key });
-          videoUrl = video.url;
-          videoTitle = video.title;
-        }
+{
+  command: ['video'],
+  aliases: ['ytv', 'ytmp4'],
+  description: 'Download YouTube video (MP4)',
+  category: 'downloads',
+  handler: async (client, m, { text }) => {
+    if (!text) return m.reply('🎬 Provide a video name or YouTube link!\nEg:- *video Blinding Lights*');
+    try {
+      await client.sendMessage(m.chat, { react: { text: '🎬', key: m.key } });
+      let msg = await client.sendMessage(m.chat, { text: `🔍 Searching *${text}*...` }, { quoted: m });
 
-        await client.sendMessage(m.chat, { text: `😍 Found: *${videoTitle}*\n⏳ Downloading...`, edit: msg.key });
+      let videoId, videoTitle;
+      const ytMatch = text.match(/(?:youtu\.be\/|v=)([0-9A-Za-z_-]{11})/);
 
-        const found = await fetchYtVideo(videoUrl, api);
-        if (!found) {
-          const why = (fetchYtVideo.lastErrors || []).join('\n');
-          return client.sendMessage(m.chat, { text: '❌ Download failed. Try again in a minute.' + (why ? `\n\n🔎 Sources tried:\n${why}` : ''), edit: msg.key });
-        }
-
-        // prefer the real YouTube title over whatever name a download service made up
-        const finalTitle = (videoTitle && videoTitle !== 'YouTube Video') ? videoTitle : (found.title || videoTitle);
-        const fileName = finalTitle.replace(/[\/\\:*?"<>|]/g, '').trim() + '.mp4';
-
-        await client.sendMessage(m.chat, { video: found.buffer, mimetype: 'video/mp4', fileName, caption: `🎬 *${finalTitle}*` }, { quoted: m });
-        await client.sendMessage(m.chat, { document: found.buffer, mimetype: 'video/mp4', caption: '*DOWNLOADED BY 𝐁𝐋𝐀𝐂𝐊-𝐌𝐃*', fileName }, { quoted: m });
-        await client.sendMessage(m.chat, { text: `✅ Successfully downloaded! *${finalTitle}*`, edit: msg.key });
-      } catch (err) {
-        console.error('[ytv] failed:', err.message);
-        m.reply(`❌ An error occurred. Try again.\n\n🔎 ${String(err?.response?.status ? 'HTTP ' + err.response.status : err.message).slice(0, 80)}`);
+      if (ytMatch) {
+        videoId = ytMatch[1];
+        videoTitle = 'YouTube Video';
+      } else {
+        const search = await yts(text);
+        const video = search.videos[0];
+        if (!video) return client.sendMessage(m.chat, { text: `❌ No results found for: *${text}*`, edit: msg.key });
+        videoId = video.videoId;
+        videoTitle = video.title;
       }
-    }
-  },
 
+      await client.sendMessage(m.chat, { text: `😍 Found: *${videoTitle}*\n⏳ Downloading...`, edit: msg.key });
+
+      const data = await ytmp3(videoId, 'mp4');
+      if (!data?.result_url) {
+        return client.sendMessage(m.chat, { text: '❌ Download failed. Try a different video.', edit: msg.key });
+      }
+
+      const finalTitle = data.title || videoTitle;
+      const downloadUrl = data.result_url;
+      const fileName = finalTitle.replace(/[\/\\:*?"<>|]/g, '').trim() + '.mp4';
+
+      await client.sendMessage(m.chat, { text: `✅ Downloading: *${finalTitle}*`, edit: msg.key });
+
+      const head = await global.axios.head(downloadUrl, { timeout: 15000 }).catch(() => null);
+      const size = head?.headers?.['content-length'];
+      if (size && parseInt(size) > 150 * 1024 * 1024) {
+        return client.sendMessage(m.chat, { text: '❌ Video too large (>150MB). Try a shorter video.', edit: msg.key });
+      }
+
+      const dlRes = await global.axios.get(downloadUrl, { responseType: 'arraybuffer', timeout: 120000 });
+      const buffer = Buffer.from(dlRes.data);
+
+      await client.sendMessage(m.chat, { video: buffer, mimetype: 'video/mp4', fileName, caption: `🎬 *${finalTitle}*` }, { quoted: m });
+      await client.sendMessage(m.chat, { text: `✅ Successfully downloaded! *${finalTitle}*`, edit: msg.key });
+    } catch (err) {
+      m.reply('❌ An error occurred: ' + err.message);
+    }
+  }
+},
   {
     command: ['video2'],
     aliases: ['ytv2'],

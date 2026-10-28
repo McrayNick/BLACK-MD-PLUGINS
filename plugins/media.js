@@ -25,12 +25,12 @@ async function sendViewOnce(client, m, jid, quotedMessage, label) {
   let sent = false;
   if (q.imageMessage) {
     const imageUrl = await client.downloadAndSaveMediaMessage(q.imageMessage);
-    await client.sendMessage(jid, { image: { url: imageUrl }, caption: `${label}\n${q.imageMessage.caption || ''}` }, { quoted: m });
+    await client.sendMessage(jid, { image: { url: imageUrl }, caption: `${label}\n${q.imageMessage.caption || ''}` }, m ? { quoted: m } : {});
     sent = true;
   }
   if (q.videoMessage) {
     const videoUrl = await client.downloadAndSaveMediaMessage(q.videoMessage);
-    await client.sendMessage(jid, { video: { url: videoUrl }, caption: `${label}\n${q.videoMessage.caption || ''}` }, { quoted: m });
+    await client.sendMessage(jid, { video: { url: videoUrl }, caption: `${label}\n${q.videoMessage.caption || ''}` }, m ? { quoted: m } : {});
     sent = true;
   }
   if (q.audioMessage) {
@@ -40,11 +40,99 @@ async function sendViewOnce(client, m, jid, quotedMessage, label) {
       audio: buffer,
       mimetype: a.mimetype || 'audio/ogg; codecs=opus',
       ptt: !!a.ptt   // keeps voice notes as voice notes
-    }, { quoted: m });
+    }, m ? { quoted: m } : {});
     sent = true;
   }
   return sent;
 }
+
+
+// ── view-once by EMOJI reply or EMOJI reaction (works on its own, no dispatcher needed) ──
+const VO_EMOJIS = new Set(['😂', '😍', '🌚', '🌝', '😊', '😉', '🙄', '☑️', '💯', '😅', '🫠', '🙂', '🥰', '😘', '🤩', '😙', '🤢', '🤔', '🫣'].map(e => e.replace(/️/g, '')));
+const normEmoji = (s) => String(s || '').replace(/️/g, '').trim();
+const VO_CACHE = new Map();                                   // message id -> view-once content seen arriving
+const VO_DONE = global.__bmVODone = global.__bmVODone || new Set();   // trigger ids already handled (shared with .vv2)
+const isViewOnceContent = (c) => {
+  if (!c) return false;
+  if (c.viewOnceMessage || c.viewOnceMessageV2 || c.viewOnceMessageV2Extension) return true;
+  return ['imageMessage', 'videoMessage', 'audioMessage'].some(k => c[k] && c[k].viewOnce === true);
+};
+const stripEphemeral = (c) => (c && (c.ephemeralMessage?.message || c.documentWithCaptionMessage?.message)) || c;
+const markDone = (id) => { if (!id) return true; if (VO_DONE.has(id)) return false; VO_DONE.add(id); if (VO_DONE.size > 500) VO_DONE.delete(VO_DONE.values().next().value); return true; };
+function ownerNumbers() {
+  const out = new Set();
+  try {
+    const set = require('../set');
+    for (const k of ['owner', 'owners', 'ownerNumber', 'ownernumber', 'OWNER', 'OWNER_NUMBER', 'sudo', 'dev']) {
+      const v = set[k]; if (!v) continue;
+      (Array.isArray(v) ? v : String(v).split(/[,\s]+/)).forEach(x => { const d = String(x).replace(/\D/g, ''); if (d.length >= 7) out.add(d); });
+    }
+  } catch (_) {}
+  const env = process.env.OWNER_NUMBER || process.env.OWNER || '';
+  String(env).split(/[,\s]+/).forEach(x => { const d = x.replace(/\D/g, ''); if (d.length >= 7) out.add(d); });
+  return out;
+}
+const numOf = (j) => String(j || '').split('@')[0].split(':')[0];
+function fromOwner(client, msg, who) {
+  if (msg.key.fromMe) return true;
+  const me = numOf(client.user && client.user.id);
+  const n = numOf(who || msg.key.participant || msg.key.remoteJid);
+  return n === me || ownerNumbers().has(n);
+}
+async function voOnMessage(client, msg) {
+  if (!msg || !msg.message || !msg.key) return;
+  const chat = msg.key.remoteJid || '';
+  if (chat === 'status@broadcast') return;
+  const content = stripEphemeral(msg.message);
+
+  // remember every view-once that arrives, so we can still open it after it is viewed
+  if (isViewOnceContent(content)) {
+    VO_CACHE.set(msg.key.id, { message: content });
+    if (VO_CACHE.size > 300) VO_CACHE.delete(VO_CACHE.keys().next().value);
+    return;
+  }
+
+  let target = null, trigger = null, quote = null;
+  const react = content.reactionMessage;
+  if (react) {
+    if (!VO_EMOJIS.has(normEmoji(react.text))) return;
+    if (!fromOwner(client, msg)) return;
+    const hit = VO_CACHE.get(react.key && react.key.id);
+    if (!hit) return;
+    target = hit.message; trigger = msg.key.id;
+  } else {
+    const text = content.conversation || (content.extendedTextMessage && content.extendedTextMessage.text) || '';
+    if (!VO_EMOJIS.has(normEmoji(text))) return;
+    const ci = content.extendedTextMessage && content.extendedTextMessage.contextInfo;
+    if (!ci || (!ci.quotedMessage && !ci.stanzaId)) return;
+    if (!fromOwner(client, msg)) return;
+    const hit = VO_CACHE.get(ci.stanzaId);
+    target = hit ? hit.message : stripEphemeral(ci.quotedMessage);
+    if (!isViewOnceContent(target)) return;
+    trigger = msg.key.id; quote = msg;
+  }
+  if (!markDone(trigger)) return;
+  try {
+    await sendViewOnce(client, quote, client.user.id, target, 'Retrieved by Blackie!');
+  } catch (e) {
+    try { await client.sendMessage(client.user.id, { text: 'Could not retrieve it: ' + e.message }); } catch (_) {}
+  }
+}
+function ensureVOHooks(client) {
+  if (!client || client.__bmVO || !client.ev || typeof client.ev.on !== 'function') return false;
+  client.__bmVO = true;
+  client.ev.on('messages.upsert', async (u) => { for (const msg of (u && u.messages) || []) { try { await voOnMessage(client, msg); } catch (_) {} } });
+  return true;
+}
+// try to attach by ourselves shortly after start (works when the bot exposes its socket globally)
+(() => {
+  let tries = 0;
+  const t = setInterval(() => {
+    for (const k of ['conn', 'client', 'sock', 'Matrix']) { try { if (global[k] && ensureVOHooks(global[k])) { clearInterval(t); return; } } catch (_) {} }
+    if (++tries > 60) clearInterval(t);
+  }, 3000);
+  if (t.unref) t.unref();
+})();
 
 module.exports = [
 {
@@ -528,6 +616,7 @@ module.exports = [
     handler: async (client, m, { Owner }) => {
       if (!m.quoted) return;
       if (!Owner) return;
+      if (!markDone(m.key?.id || m.id)) return;   // already opened by the emoji listener
       const quotedMessage = m.msg?.contextInfo?.quotedMessage;
       if (!quotedMessage) return client.sendMessage(client.user.id, { text: 'Could not find the viewonce message.' });
       try {
@@ -747,3 +836,9 @@ module.exports = [
   },
 
 ];
+
+// attach the emoji / reaction listener the first time any command of this file runs
+for (const cmd of module.exports) {
+  const orig = cmd.handler;
+  cmd.handler = async (client, ...rest) => { ensureVOHooks(client); return orig(client, ...rest); };
+}

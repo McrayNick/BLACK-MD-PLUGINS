@@ -1,13 +1,5 @@
 'use strict';
 
-/**
- * toolkit3.js  —  BLACK-MD plugin, batch 3
- *   .fancy  .emojify  .binary                         text
- *   .waveform  .spectrum  .slideshow  .blurface       audio / picture / video
- *   .rules  .setrules  .snapshot                      group tools
- *   .afk  .smute  .sunmute                            group presence / moderation
- */
-
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -16,7 +8,6 @@ const { execFile } = require('child_process');
 const BM = '𝐁𝐋𝐀𝐂𝐊-𝐌𝐃';
 const TAG = `_${BM}_`;
 
-// ── helpers ──────────────────────────────────────────────────────────────
 function ffmpegBin() {
   try { return require('../lib/stickerlite').ffmpegBin(); } catch (_) { return 'ffmpeg'; }
 }
@@ -85,7 +76,6 @@ function parseTime(s) {
 }
 const COLORS = { cyan: '#00e5ff', magenta: '#ff2ec8', green: '#39ff78', gold: '#ffc42e', red: '#ff3c46', blue: '#468cff', white: '#ffffff', purple: '#b266ff', orange: '#ff8a1f' };
 
-// ═════════════════════════ persistent data ═══════════════════════════════
 function jsonStore(name, init) {
   const file = path.join(process.cwd(), name);
   let data = null;
@@ -95,10 +85,9 @@ function jsonStore(name, init) {
   };
 }
 const RULES = jsonStore('rules_data.json', () => ({}));
-const AFK = jsonStore('afk_data.json', () => ({}));       // key: primary number -> { nums, reason, at, name, last:{} }
-const SMUTE = jsonStore('smute_data.json', () => ({}));   // key: chat -> [ { nums, name } ]
+const AFK = jsonStore('afk_data.json', () => ({}));
+const SMUTE = jsonStore('smute_data.json', () => ({}));
 
-// every number a person can show up as in a group (phone number and lid forms)
 async function aliasesFor(client, chat, jid) {
   const set = new Set([num(jid)]);
   if (chat && String(chat).endsWith('@g.us')) {
@@ -111,7 +100,6 @@ async function aliasesFor(client, chat, jid) {
   return [...set].filter(Boolean);
 }
 
-// ═════════════════════════ message listener (afk + smute) ════════════════
 function rawText(msg) {
   const x = msg.message || {};
   const inner = x.ephemeralMessage?.message || x.viewOnceMessage?.message || x;
@@ -132,7 +120,6 @@ async function onMessage(client, msg) {
   const sender = msg.key.participant || msg.key.participantAlt || chat;
   const senderNums = [sender, msg.key.participantAlt, msg.key.participantPn].filter(Boolean).map(num);
 
-  // smute: delete the muted person's messages
   if (isGroup) {
     const list = SMUTE.get()[chat] || [];
     if (list.some(e => e.nums.some(n => senderNums.includes(n)))) {
@@ -146,14 +133,12 @@ async function onMessage(client, msg) {
   const entries = Object.entries(afk);
   if (!entries.length) return;
 
-  // the afk person is back
   for (const [key, e] of entries) {
     if (e.nums.some(n => senderNums.includes(n)) && Date.now() - e.at > 4000 && !/^\W?(afk|back)\b/i.test(body.trim())) {
       delete afk[key]; AFK.save();
       try { await client.sendMessage(chat, { text: `👋 *${BM}*\n@${num(sender)} is back after ${human(Date.now() - e.at)}.`, mentions: [sender] }, { quoted: msg }); } catch (_) {}
     }
   }
-  // someone tagged / replied to an afk person
   if (isGroup) {
     const c = rawContext(msg);
     const hit = [...(c.mentionedJid || []), c.participant].filter(Boolean).map(num);
@@ -173,10 +158,8 @@ function ensureHooks(client) {
   client.ev.on('messages.upsert', async (u) => { for (const msg of (u && u.messages) || []) { try { await onMessage(client, msg); } catch (_) {} } });
 }
 setTimeout(() => ensureHooks(global.conn || global.client || global.sock || null), 8000).unref?.();
-// handy for the bot's own command handler: if (global.BM_SMUTED?.(chat, sender)) return;
 global.BM_SMUTED = (chat, jid) => ((SMUTE.get()[chat] || []).some(e => e.nums.includes(num(jid))));
 
-// ═════════════════════════ fancy text ════════════════════════════════════
 function mathMap(up, lo, dig, exc = {}) {
   return (ch) => {
     if (exc[ch]) return exc[ch];
@@ -218,7 +201,6 @@ const STYLES = [
 function fancy(style, text) { return bySeg(text, STYLES[style][1]); }
 const flipText = (t) => Array.from(t).reverse().map(c => FLIP[c] || FLIP[c.toLowerCase()] || c).join('');
 
-// ═════════════════════════ emojify ═══════════════════════════════════════
 const EMOJI = {
   love: '❤️', heart: '❤️', mapenzi: '❤️', kiss: '😘', happy: '😊', sad: '😢', cry: '😭', laugh: '😂', funny: '🤣', smile: '😄', angry: '😡', cool: '😎', sleep: '😴', tired: '🥱', sick: '🤒', hot: '🔥', fire: '🔥', moto: '🔥',
   cold: '🥶', ice: '🧊', sun: '☀️', jua: '☀️', moon: '🌙', star: '⭐', stars: '✨', rain: '🌧️', mvua: '🌧️', storm: '⛈️', snow: '❄️', wind: '💨', water: '💧', maji: '💧', sea: '🌊', beach: '🏖️', tree: '🌳', flower: '🌸', rose: '🌹',
@@ -231,20 +213,16 @@ const EMOJI = {
   dog: '🐶', cat: '🐱', lion: '🦁', simba: '🦁', elephant: '🐘', tembo: '🐘', bird: '🐦', cow: '🐄', goat: '🐐', monkey: '🐵', snake: '🐍', kenya: '🇰🇪', africa: '🌍', world: '🌍', earth: '🌍', fast: '⚡', power: '⚡', strong: '💪', gym: '🏋️',
   bot: '🤖', robot: '🤖', hack: '👨‍💻', code: '💻', rocket: '🚀', bomb: '💣', gun: '🔫', sword: '⚔️', shoe: '👟', shoes: '👟', shirt: '👕', dress: '👗', hat: '🧢', glasses: '🕶️', key: '🔑', lock: '🔒', light: '💡', eye: '👀', eyes: '👀', see: '👀'
 };
-// ═════════════════════════ blur zones ════════════════════════════════════
 const ZONES = {
   face: [0.22, 0.08, 0.56, 0.5], center: [0.2, 0.2, 0.6, 0.6], middle: [0, 0.33, 1, 0.34], top: [0, 0, 1, 0.34], bottom: [0, 0.66, 1, 0.34],
   left: [0, 0, 0.5, 1], right: [0.5, 0, 0.5, 1], topleft: [0, 0, 0.5, 0.5], topright: [0.5, 0, 0.5, 0.5], bottomleft: [0, 0.5, 0.5, 0.5], bottomright: [0.5, 0.5, 0.5, 0.5]
 };
 
-// ═════════════════════════ slideshow queue ═══════════════════════════════
 const slideQueues = new Map();
 function dropSlides(s) { const q = slideQueues.get(s); if (q) { clearTimeout(q.timer); rmDir(q.dir); slideQueues.delete(s); } }
 
-// ═════════════════════════ COMMANDS ══════════════════════════════════════
 module.exports = [
 
-  // ───────────────────────── .fancy ──────────────────────────
   {
     command: ['fancy'],
     aliases: ['font', 'fonts', 'stylish', 'style'],
@@ -273,7 +251,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .emojify ────────────────────────
   {
     command: ['emojify'],
     aliases: ['emojis', 'addemoji', 'emojitext'],
@@ -294,7 +271,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .binary ─────────────────────────
   {
     command: ['binary'],
     aliases: ['bin', 'tobinary', 'frombinary'],
@@ -321,7 +297,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .waveform ───────────────────────
   {
     command: ['waveform'],
     aliases: ['wavepic', 'soundwave', 'audiopic'],
@@ -349,7 +324,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .spectrum ───────────────────────
   {
     command: ['spectrum'],
     aliases: ['visualizer', 'musicvideo', 'soundbars'],
@@ -387,7 +361,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .blurface ───────────────────────
   {
     command: ['blurface'],
     aliases: ['hidearea', 'censor', 'blurarea', 'pixelate'],
@@ -436,7 +409,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .slideshow ──────────────────────
   {
     command: ['slideshow'],
     aliases: ['slides', 'photovideo', 'picvideo'],
@@ -497,7 +469,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .rules / .setrules ──────────────
   {
     command: ['rules'],
     aliases: ['grouprules'],
@@ -539,7 +510,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .snapshot ───────────────────────
   {
     command: ['snapshot'],
     aliases: ['groupsnapshot', 'memberlist', 'exportmembers'],
@@ -570,7 +540,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .afk ────────────────────────────
   {
     command: ['afk'],
     aliases: ['away', 'back'],
@@ -594,7 +563,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .smute ──────────────────────────
   {
     command: ['smute'],
     aliases: ['softmute', 'silence'],

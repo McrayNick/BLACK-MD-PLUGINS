@@ -1,16 +1,5 @@
 'use strict';
 
-/**
- * toolkit2.js  —  BLACK-MD plugin, batch 2
- *   .stitch  .compress  .crop  .sketch                      pictures / video
- *   .pitch  .volume  .denoise                               audio (video in -> video out)
- *   .logo  .banner                                          futuristic images
- *   .remind  .reminders  .unremind                          reminders with a tagged pop-up
- *   .roast  .caption  .hashtags  .mockup  .cv               writing helpers
- *   .linkcheck  .exif  .base64  .encrypt  .decrypt          safety / tools
- *   .fuel  .fuelset  .time                                  info
- */
-
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -18,11 +7,10 @@ const crypto = require('crypto');
 const { execFile } = require('child_process');
 const axios = global.axios || require('axios');
 
-const BM = '𝐁𝐋𝐀𝐂𝐊-𝐌𝐃';                       // bold serif brand mark for text replies
+const BM = '𝐁𝐋𝐀𝐂𝐊-𝐌𝐃';
 const UA = 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36';
 const TAG = `_${BM}_`;
 
-// ── helpers ──────────────────────────────────────────────────────────────
 function ffmpegBin() {
   try { return require('../lib/stickerlite').ffmpegBin(); } catch (_) { return 'ffmpeg'; }
 }
@@ -58,7 +46,7 @@ const num = (jid) => String(jid || '').split('@')[0].split(':')[0];
 const pickOne = (a) => a[Math.floor(Math.random() * a.length)];
 const kb = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.round(n / 1024) + ' KB';
 
-let LAST = null;                                   // last client we saw (reminders need it)
+let LAST = null;
 const grab = (client) => { if (client) LAST = client; };
 
 function mediaTarget(m) {
@@ -84,7 +72,6 @@ async function needMedia(client, m, kinds, usage) {
   return { t, mime, buf };
 }
 
-// short plain-text AI call (best effort; returns null when unavailable)
 async function askAI(prompt) {
   try {
     const r = await axios.get('https://text.pollinations.ai/' + encodeURIComponent(prompt), {
@@ -96,7 +83,6 @@ async function askAI(prompt) {
   } catch (_) { return null; }
 }
 
-// ═════════════════════════ text → transparent PNG (Jimp) ═════════════════
 async function textLayer(text, width, sizes = [128, 64, 32], maxHeight = 400) {
   const Jimp = require('jimp');
   const key = { 128: Jimp.FONT_SANS_128_WHITE, 64: Jimp.FONT_SANS_64_WHITE, 32: Jimp.FONT_SANS_32_WHITE };
@@ -112,7 +98,6 @@ async function textLayer(text, width, sizes = [128, 64, 32], maxHeight = 400) {
   return { png: await img.getBufferAsync(Jimp.MIME_PNG), h: th + pad * 2, size };
 }
 
-// ═════════════════════════ futuristic image (logo / banner) ══════════════
 const THEMES = {
   cyan:    { c: [0, 229, 255],   bg: [6, 10, 28],  bg2: [20, 8, 60] },
   magenta: { c: [255, 46, 200],  bg: [18, 4, 28],  bg2: [50, 6, 70] },
@@ -146,7 +131,6 @@ async function futuristicImage(dir, { w, h, name, tagline, theme, nameSizes }) {
     `[bg][g1]overlay=x=(W-w)/2:y=${ny}[a1];[a1][g2]overlay=x=(W-w)/2:y=${ny}[a2];[a2][n3]overlay=x=(W-w)/2:y=${ny}[a3]`;
   let last = 'a3';
   if (tagL) { fc += `;[${last}][2:v]overlay=x=(W-w)/2:y=${ty}[a4]`; last = 'a4'; }
-  // corner brackets + a glowing rule
   const boxes = [
     [m, m, bw, th], [m, m, th, bw], [w - m - bw, m, bw, th], [w - m - th, m, th, bw],
     [m, h - m - th, bw, th], [m, h - m - bw, th, bw], [w - m - bw, h - m - th, bw, th], [w - m - th, h - m - bw, th, bw]
@@ -162,7 +146,6 @@ function parseThemeWord(parts) {
   return { theme, rest: keep };
 }
 
-// ═════════════════════════ reminders ═════════════════════════════════════
 const REM_FILE = path.join(process.cwd(), 'reminders_data.json');
 let REM = null;
 function loadRem() {
@@ -195,7 +178,6 @@ function parseWhen(s) {
   return null;
 }
 
-// full reminder input: "<when> <text> [| song name | alarm | silent]"  (the time can also be at the END)
 function parseReminder(raw) {
   raw = String(raw || '').trim();
   let body = raw, tone = null;
@@ -224,7 +206,6 @@ function human(ms) {
   return Math.round(h / 24) + ' days';
 }
 
-// ── alert sound ──────────────────────────────────────────────────────────
 let LASTCTX = null;
 async function alarmFile() {
   const f = path.join(os.tmpdir(), 'blackmd_alert.mp3');
@@ -291,10 +272,8 @@ async function fireDue() {
 }
 const remTimer = setInterval(() => { fireDue().catch(() => {}); }, 15000);
 if (remTimer.unref) remTimer.unref();
-// make a client available to the timer even before any toolkit2 command is used
 setTimeout(() => { if (!LAST) LAST = global.conn || global.client || global.sock || global.Matrix || null; }, 8000).unref?.();
 
-// ═════════════════════════ writing banks ═════════════════════════════════
 const ROASTS = [
   '{n}, your WiFi is faster at disconnecting than you are at replying.',
   '{n} still says "I\'m on my way" while looking for socks.',
@@ -350,7 +329,6 @@ const TAGKEYS = {
 };
 const STOP = new Set('the a an and or for to of in on at is are was were be been it this that with my your our i you we they he she as by from but not so if me us them his her its just very really about have has had will can could would should do does did get got into out up down over'.split(' '));
 
-// ═════════════════════════ link check data ═══════════════════════════════
 const SHORTENERS = new Set(['bit.ly', 'tinyurl.com', 't.co', 'is.gd', 'v.gd', 'cutt.ly', 'rb.gy', 'goo.gl', 'ow.ly', 'shorturl.at', 'tiny.cc', 'rebrand.ly', 'buff.ly', 'lnkd.in']);
 const RISKY_TLD = /\.(zip|mov|xyz|top|click|work|loan|gq|tk|ml|cf|ga|icu|cyou|rest|sbs|monster|buzz|vip|cam|bid|win|country|stream|download|racing|review|science|party)$/;
 const BAIT = /(login|log-in|signin|verify|verification|secure|security|update|account|wallet|bonus|prize|winner|claim|giveaway|free-?(data|airtime|money|cash|gift)|airtime|reward|refund|suspend|unlock|confirm|banking|password|pin-?reset|promo)/;
@@ -391,7 +369,6 @@ function analyseUrl(raw) {
   return { score, flags, host: reg };
 }
 
-// ═════════════════════════ EXIF reader (JPEG) ════════════════════════════
 function readExif(buf) {
   if (buf.length < 4 || buf[0] !== 0xFF || buf[1] !== 0xD8) return null;
   let p = 2, tiff = -1;
@@ -445,7 +422,6 @@ function readExif(buf) {
   return res;
 }
 
-// ═════════════════════════ PDF (tiny writer, Helvetica) ══════════════════
 function pdfClean(s) {
   return String(s).replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, '-').replace(/…/g, '...').replace(/•/g, '-')
     .replace(/[^\x20-\x7E\xA0-\xFF]/g, '?').replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
@@ -472,7 +448,7 @@ function buildPdf(items) {
   const objs = [];
   const add = (s) => { objs.push(s); return objs.length; };
   add('<< /Type /Catalog /Pages 2 0 R >>');
-  add(null); // pages placeholder
+  add(null);
   const f1 = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
   const f2 = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
   const kids = [];
@@ -491,7 +467,6 @@ function buildPdf(items) {
   return Buffer.from(out, 'latin1');
 }
 
-// ═════════════════════════ audio job (audio->audio, video->video) ════════
 async function audioJob(client, m, af, label, extraNote) {
   const x = await needMedia(client, m, /audio|video/, `Reply to a *voice note, song or video* with this command.`);
   if (!x) return;
@@ -521,11 +496,9 @@ async function audioJob(client, m, af, label, extraNote) {
   } finally { rmDir(dir); }
 }
 
-// ═════════════════════════ fuel data ═════════════════════════════════════
 const FUEL_FILE = path.join(process.cwd(), 'fuel_data.json');
 const loadFuel = () => { try { return JSON.parse(fs.readFileSync(FUEL_FILE, 'utf8')); } catch (_) { return null; } };
 
-// ═════════════════════════ time data ═════════════════════════════════════
 const CITY_TZ = {
   nairobi: 'Africa/Nairobi', kenya: 'Africa/Nairobi', mombasa: 'Africa/Nairobi', kisumu: 'Africa/Nairobi', nakuru: 'Africa/Nairobi', eldoret: 'Africa/Nairobi',
   kampala: 'Africa/Kampala', uganda: 'Africa/Kampala', 'dar es salaam': 'Africa/Dar_es_Salaam', dar: 'Africa/Dar_es_Salaam', tanzania: 'Africa/Dar_es_Salaam', dodoma: 'Africa/Dar_es_Salaam',
@@ -549,7 +522,7 @@ function resolveTz(q) {
     if (!TZ_BY_CITY) { TZ_BY_CITY = {}; for (const z of (Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : [])) TZ_BY_CITY[z.split('/').pop().replace(/_/g, ' ').toLowerCase()] = z; }
     if (TZ_BY_CITY[q]) return TZ_BY_CITY[q];
     const direct = q.replace(/\s+/g, '_');
-    return new Intl.DateTimeFormat('en', { timeZone: direct }).resolvedOptions().timeZone;     // throws if not a real zone
+    return new Intl.DateTimeFormat('en', { timeZone: direct }).resolvedOptions().timeZone;
   } catch (_) { return null; }
 }
 function offsetMin(tz, d = new Date()) {
@@ -569,13 +542,11 @@ function clock(tz) {
   return { time, date, hour, off: offsetMin(tz, d), icon: hour >= 6 && hour < 18 ? '☀️' : '🌙' };
 }
 
-// ═════════════════════════ COMMANDS ══════════════════════════════════════
 const stitchQueues = new Map();
 function dropStitch(s) { const q = stitchQueues.get(s); if (q) { clearTimeout(q.timer); rmDir(q.dir); stitchQueues.delete(s); } }
 
 module.exports = [
 
-  // ───────────────────────── .stitch ─────────────────────────
   {
     command: ['stitch'],
     aliases: ['collage', 'joinimages', 'combine'],
@@ -624,7 +595,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .compress ───────────────────────
   {
     command: ['compress'],
     aliases: ['shrink', 'reducesize'],
@@ -664,7 +634,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .crop ───────────────────────────
   {
     command: ['crop'],
     aliases: ['cropto', 'resizeto'],
@@ -706,7 +675,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .sketch ─────────────────────────
   {
     command: ['sketch'],
     aliases: ['pencil', 'drawing'],
@@ -742,7 +710,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .pitch ──────────────────────────
   {
     command: ['pitch'],
     aliases: ['voicepitch', 'voicechanger'],
@@ -761,7 +728,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .volume ─────────────────────────
   {
     command: ['volume'],
     aliases: ['louder', 'amplify', 'quieter'],
@@ -779,7 +745,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .denoise ────────────────────────
   {
     command: ['denoise'],
     aliases: ['denoiseaudio', 'cleanaudio', 'removenoise'],
@@ -793,7 +758,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .logo ───────────────────────────
   {
     command: ['logo'],
     aliases: ['futurelogo', 'neonlogo', 'makelogo'],
@@ -816,7 +780,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .banner ─────────────────────────
   {
     command: ['banner'],
     aliases: ['cover', 'headerimage', 'makebanner'],
@@ -839,7 +802,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .remind ─────────────────────────
   {
     command: ['remind'],
     aliases: ['reminder', 'remindme', 'setreminder'],
@@ -914,7 +876,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .roast ──────────────────────────
   {
     command: ['roast'],
     aliases: ['burn', 'roastme'],
@@ -932,7 +893,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .caption ────────────────────────
   {
     command: ['caption'],
     aliases: ['captions', 'igcaption', 'captionidea'],
@@ -959,7 +919,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .hashtags ───────────────────────
   {
     command: ['hashtags'],
     aliases: ['hashtag', 'tags'],
@@ -981,7 +940,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .mockup ─────────────────────────
   {
     command: ['mockup'],
     aliases: ['productpost', 'adpost', 'sellpost'],
@@ -1005,7 +963,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .cv ─────────────────────────────
   {
     command: ['cv'],
     aliases: ['resume', 'makecv'],
@@ -1041,7 +998,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .linkcheck ──────────────────────
   {
     command: ['linkcheck'],
     aliases: ['checklink', 'scamcheck', 'isitsafe'],
@@ -1067,7 +1023,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .exif ───────────────────────────
   {
     command: ['exif'],
     aliases: ['photoinfo', 'metadata', 'stripexif'],
@@ -1106,7 +1061,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .base64 ─────────────────────────
   {
     command: ['base64'],
     aliases: ['b64', 'encode64', 'decode64'],
@@ -1132,7 +1086,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .encrypt / .decrypt ─────────
   {
     command: ['encrypt'],
     aliases: ['lock', 'seal'],
@@ -1183,7 +1136,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .fuel ───────────────────────────
   {
     command: ['fuel'],
     aliases: ['petrol', 'fuelprice', 'epra', 'fuelprices'],
@@ -1235,7 +1187,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .time ───────────────────────────
   {
     command: ['time', 'worldtime'],
     aliases: ['clock', 'timein', 'whattime'],

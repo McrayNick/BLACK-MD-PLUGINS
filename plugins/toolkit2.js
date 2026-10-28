@@ -194,6 +194,28 @@ function parseWhen(s) {
   }
   return null;
 }
+
+// full reminder input: "<when> <text> [| song name | alarm | silent]"  (the time can also be at the END)
+function parseReminder(raw) {
+  raw = String(raw || '').trim();
+  let body = raw, tone = null;
+  const bar = raw.indexOf('|');
+  if (bar >= 0) {
+    body = raw.slice(0, bar).trim();
+    const opt = raw.slice(bar + 1).trim();
+    if (/^(silent|none|off|quiet|mute)$/i.test(opt)) tone = { type: 'none' };
+    else if (/^(alarm|alert|beep|default)$/i.test(opt)) tone = { type: 'alarm' };
+    else if (opt) { const sm = opt.match(/^(?:song|play|music|tone)\b\s*:?\s*([\s\S]+)$/i); tone = { type: 'song', query: (sm ? sm[1] : opt).trim().slice(0, 100) }; }
+  }
+  let w = parseWhen(body);
+  if (!w) {
+    let t = body.match(/^([\s\S]+?)\s+(?:at\s+|@\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
+    if (t) w = parseWhen(`at ${t[2]}${t[3] ? ':' + t[3] : ''}${t[4]} ${t[1]}`);
+    if (!w) { t = body.match(/^([\s\S]+?)\s+in\s+((?:\d+\s*[dhms]\s*)+)$/i); if (t) w = parseWhen(`${t[2]} ${t[1]}`); }
+    if (!w) { t = body.match(/^([\s\S]+?)\s+at\s+(\d{1,2}):(\d{2})$/i); if (t) w = parseWhen(`at ${t[2]}:${t[3]} ${t[1]}`); }
+  }
+  return w ? { ...w, tone } : null;
+}
 const nairobiStamp = (t) => new Date(t).toLocaleString('en-GB', { timeZone: 'Africa/Nairobi', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
 function human(ms) {
   const s = Math.round(ms / 1000); if (s < 90) return s + ' seconds';
@@ -201,6 +223,55 @@ function human(ms) {
   const h = Math.floor(m / 60), r = m % 60; if (h < 48) return h + 'h' + (r ? ' ' + r + 'm' : '');
   return Math.round(h / 24) + ' days';
 }
+
+// ── alert sound ──────────────────────────────────────────────────────────
+let LASTCTX = null;
+async function alarmFile() {
+  const f = path.join(os.tmpdir(), 'blackmd_alert.mp3');
+  if (fs.existsSync(f) && fs.statSync(f).size > 2000) return f;
+  const e = 'mod(t,1.2)';
+  await ff(['-y', '-f', 'lavfi', '-i',
+    `aevalsrc='0.5*sin(2*PI*t*if(lt(${e},0.15),880,if(lt(${e},0.3),1175,if(lt(${e},0.45),1568,0))))*lt(${e},0.45)':d=7.2:s=44100`,
+    '-af', 'afade=t=out:st=6.4:d=0.8', '-c:a', 'libmp3lame', '-b:a', '96k', '-ac', '1', f], 60000);
+  return f;
+}
+async function songViaPlay(client, to, sender, query) {
+  const play = require('./downloads').find(c => (c.command || []).includes('play'));
+  if (!play) throw new Error('.play not found');
+  let got = null;
+  const spy = new Proxy(client, {
+    get(t, prop) {
+      if (prop === 'sendMessage') return async (_jid, content) => {
+        if (!got && content && content.audio) got = content.audio;
+        else if (!got && content && content.document && /audio/.test(content.mimetype || '')) got = content.document;
+        return {};
+      };
+      const v = t[prop];
+      return typeof v === 'function' ? v.bind(t) : v;
+    }
+  });
+  const fakeM = { chat: to, sender, isGroup: false, key: {}, quoted: null, mentionedJid: [], pushName: '', reply: async () => {} };
+  const ctx = { ...(loadRem().ctx || {}), ...(LASTCTX || {}), text: query, q: query, args: query.split(' '), reply: async () => {} };
+  await Promise.race([play.handler(spy, fakeM, ctx), new Promise((_, rej) => setTimeout(() => rej(new Error('song timed out')), 120000))]);
+  if (!got) throw new Error('song not found');
+  return got;
+}
+async function playTone(client, r) {
+  const c = loadRem();
+  const tone = r.tone || (c.tones && c.tones[r.sender]) || { type: 'alarm' };
+  if (tone.type === 'none') return;
+  if (tone.type === 'song') {
+    try {
+      const audio = await songViaPlay(client, r.sender, r.sender, tone.query);
+      await client.sendMessage(r.sender, { audio, mimetype: 'audio/mpeg', ptt: false, fileName: `${tone.query.slice(0, 40)}.mp3` });
+      return;
+    } catch (_) { /* fall back to the alert tone */ }
+  }
+  try {
+    await client.sendMessage(r.sender, { audio: fs.readFileSync(await alarmFile()), mimetype: 'audio/mpeg', ptt: false, fileName: 'BLACK-MD alert.mp3' });
+  } catch (_) {}
+}
+
 async function fireDue() {
   const c = loadRem();
   if (!LAST || !c.list.length) return;
@@ -208,11 +279,14 @@ async function fireDue() {
   if (!due.length) return;
   c.list = c.list.filter(r => r.at > Date.now()); saveRem();
   for (const r of due) {
-    const body = `⏰ *${BM} REMINDER* ⏰\n\n@${num(r.sender)}\n\n📌 *${r.text}*\n\n_set ${human(Date.now() - r.set)} ago_`;
+    const tn = r.tone || (c.tones && c.tones[r.sender]) || { type: 'alarm' };
+    const body = `⏰ *${BM} ALERT* ⏰\n\n@${num(r.sender)}\n\n📌 *${r.text}*\n\n` +
+      (tn.type === 'song' ? `🎵 _${tn.query}_ is coming. Tap the audio to play.\n` : tn.type === 'alarm' ? '🔔 _Tap the audio to play your alert._\n' : '') + `_set ${human(Date.now() - r.set)} ago_`;
     try { await LAST.sendMessage(r.sender, { text: body, mentions: [r.sender] }); } catch (_) {}
     if (r.chat && r.chat !== r.sender && String(r.chat).endsWith('@g.us')) {
       try { await LAST.sendMessage(r.chat, { text: body, mentions: [r.sender] }); } catch (_) {}
     }
+    await playTone(LAST, r);
   }
 }
 const remTimer = setInterval(() => { fireDue().catch(() => {}); }, 15000);
@@ -434,8 +508,11 @@ async function audioJob(client, m, af, label, extraNote) {
       await client.sendMessage(m.chat, { video: fs.readFileSync(out), mimetype: 'video/mp4', caption: `${label} ${extraNote || ''}`.trim() }, { quoted: m });
     } else if (/ogg|opus/.test(x.mime)) {
       const out = path.join(dir, 'out.ogg');
-      await ff(['-y', '-i', inFile, '-vn', '-af', af, '-c:a', 'libopus', '-b:a', '64k', '-ar', '48000', '-ac', '1', out]);
-      await client.sendMessage(m.chat, { audio: fs.readFileSync(out), mimetype: 'audio/ogg; codecs=opus', ptt: true }, { quoted: m });
+      const common = ['-y', '-i', inFile, '-vn', '-map_metadata', '-1', '-af', af, '-ar', '48000', '-ac', '1'];
+      try { await ff([...common, '-c:a', 'libopus', '-b:a', '32k', '-application', 'voip', '-f', 'ogg', out]); }
+      catch (_) { await ff([...common, '-c:a', 'opus', '-strict', '-2', '-b:a', '32k', '-f', 'ogg', out]); }
+      const oi = await probe(out);
+      await client.sendMessage(m.chat, { audio: fs.readFileSync(out), mimetype: 'audio/ogg; codecs=opus', ptt: true, seconds: Math.max(1, Math.round(oi.seconds || 1)) }, { quoted: m });
     } else {
       const out = path.join(dir, 'out.mp3');
       await ff(['-y', '-i', inFile, '-vn', '-af', af, '-c:a', 'libmp3lame', '-b:a', '192k', out]);
@@ -768,20 +845,43 @@ module.exports = [
     aliases: ['reminder', 'remindme', 'setreminder'],
     description: 'Set a reminder with a tagged pop-up (.remind 30m call mum / .remind at 18:30 gym)',
     category: 'tools',
-    handler: async (client, m, { text }) => {
+    handler: async (client, m, ctx) => {
+      const { text } = ctx;
       grab(client);
-      const w = parseWhen(text);
+      LASTCTX = ctx;
+      const c0 = loadRem(); c0.ctx = { api: typeof ctx.api === 'string' ? ctx.api : undefined, prefix: typeof ctx.prefix === 'string' ? ctx.prefix : undefined };
+      const w = parseReminder(text);
       if (!w || !w.text) {
-        return m.reply(`⏰ *${BM} Reminders*\n\n*.remind 30m call mum*\n*.remind 2h30m send the invoice*\n*.remind 1d pay rent*\n*.remind at 18:30 gym*   (Nairobi time)\n*.remind at 7am wake up*\n\nWhen it is time I tag you in your private chat, so your phone pops up a notification.\n*.reminders* shows your list • *.unremind <number>* cancels one.`);
+        return m.reply(`⏰ *${BM} Reminders*\n\n*.remind 30m call mum*\n*.remind 2h30m send the invoice*\n*.remind 1d pay rent*\n*.remind at 18:30 gym*   (Nairobi time)\n*.remind at 7am wake up*\n*.remind resume updates 1 am*   (time can be last too)\n\n🔔 When it is time I tag you privately and send the ${BM} alert sound.\n🎵 Want a song instead? Add *| song name*:\n*.remind at 6am wake up | song Burna Boy Last Last*\nNo sound: *| silent*\n\nMake a song your default: *.remindtone Burna Boy Last Last*\n*.reminders* shows your list • *.unremind <number>* cancels one.`);
       }
       if (w.ms < 10000) return m.reply('⚠️ Set it at least 10 seconds ahead.');
       if (w.ms > 30 * 86400000) return m.reply('⚠️ Maximum is 30 days ahead.');
       const c = loadRem();
       if (c.list.filter(r => r.sender === m.sender).length >= 20) return m.reply('⚠️ You already have 20 reminders. Cancel one with *.unremind <number>*');
       c.id += 1;
-      c.list.push({ id: c.id, sender: m.sender, chat: m.chat, at: w.at, set: Date.now(), text: w.text.slice(0, 300) });
+      c.list.push({ id: c.id, sender: m.sender, chat: m.chat, at: w.at, set: Date.now(), text: w.text.slice(0, 300), tone: w.tone || null });
       saveRem();
-      m.reply(`✅ *Reminder set* ⏰\n\n📌 ${w.text}\n🕒 ${nairobiStamp(w.at)} (in ${human(w.ms)})\n\n_I will tag you privately when it is time._`);
+      const tn = w.tone || (c.tones && c.tones[m.sender]) || { type: 'alarm' };
+      const toneLine = tn.type === 'song' ? `🎵 Song: ${tn.query}` : tn.type === 'none' ? '🔕 No sound' : `🔔 ${BM} alert sound`;
+      m.reply(`✅ *Reminder set* ⏰\n\n📌 ${w.text}\n🕒 ${nairobiStamp(w.at)} (in ${human(w.ms)})\n${toneLine}\n\n_I will tag you privately when it is time._`);
+    }
+  },
+  {
+    command: ['remindtone'],
+    aliases: ['remindsong', 'alerttone', 'remindersound'],
+    description: 'Choose the song or sound for your reminders (.remindtone <song> / alarm / off)',
+    category: 'tools',
+    handler: async (client, m, ctx) => {
+      grab(client); LASTCTX = ctx;
+      const c = loadRem(); c.tones = c.tones || {};
+      c.ctx = { api: typeof ctx.api === 'string' ? ctx.api : undefined, prefix: typeof ctx.prefix === 'string' ? ctx.prefix : undefined };
+      const a = String(ctx.text || '').trim();
+      const cur = c.tones[m.sender];
+      if (!a) return m.reply(`🔔 *${BM} Reminder sound*\n\nNow: ${!cur ? 'the BLACK-MD alert sound' : cur.type === 'song' ? '🎵 ' + cur.query : '🔕 none'}\n\n*.remindtone Burna Boy Last Last*  (play this song)\n*.remindtone alarm*  (BLACK-MD alert sound)\n*.remindtone off*  (no sound)\n\nOne reminder only: *.remind 1h call mum | song Sauti Sol Sura Yako*`);
+      if (/^(alarm|alert|default|beep|reset)$/i.test(a)) { delete c.tones[m.sender]; saveRem(); return m.reply(`🔔 Your reminders will play the ${BM} alert sound.`); }
+      if (/^(off|none|silent|mute)$/i.test(a)) { c.tones[m.sender] = { type: 'none' }; saveRem(); return m.reply('🔕 Your reminders will be silent (just the tagged message).'); }
+      c.tones[m.sender] = { type: 'song', query: a.replace(/^(song|play|music)\b\s*:?\s*/i, '').slice(0, 100) }; saveRem();
+      m.reply(`🎵 Your reminders will play: *${c.tones[m.sender].query}*\n_If the song cannot be fetched, I send the ${BM} alert sound instead._`);
     }
   },
   {

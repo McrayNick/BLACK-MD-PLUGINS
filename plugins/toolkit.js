@@ -1,17 +1,5 @@
 'use strict';
 
-/**
- * toolkit.js  —  new BLACK-MD commands
- *   .tomp3  .tovn  .cutaudio  .mergeaudio          audio tools
- *   .subtitle  .screenshot  .lyricsvideo           video tools
- *   .confess  .confessions  .confesslog            anonymous confessions for groups
- *   .whois  .vote                                  community
- *   .meme  .shorten  .color                        fun / utilities
- *
- * Uses what the bot already has: ffmpeg (found like stickerlite does), jimp, axios, yt-search,
- * and the bot's own .play (for the song in .lyricsvideo).
- */
-
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -20,7 +8,6 @@ const axios = global.axios || require('axios');
 
 const UA = 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36';
 
-// ── helpers ──────────────────────────────────────────────────────────────
 function ffmpegBin() {
   try { return require('../lib/stickerlite').ffmpegBin(); } catch (_) { return 'ffmpeg'; }
 }
@@ -32,7 +19,6 @@ function ff(args, timeout = 180000) {
     });
   });
 }
-// ffmpeg prints the file info (size, length) on stderr when run without an output
 function probe(file) {
   return new Promise((resolve) => {
     execFile(ffmpegBin(), ['-hide_banner', '-i', file], { timeout: 30000 }, (_e, _o, stderr) => {
@@ -72,7 +58,6 @@ const extFor = (mime) => (/webp/.test(mime) ? 'webp' : /png/.test(mime) ? 'png' 
   : /audio/.test(mime) ? 'm4a' : 'jpg');
 const quotedText = (m) => (m.quoted ? [m.quoted.text, m.quoted.body, m.quoted.caption, m.quoted.msg?.text].find(Boolean) || '' : '');
 
-// "1:05", "65", "1:02:03", "1m5s"  ->  seconds (or null)
 function parseTime(s) {
   s = String(s || '').trim().toLowerCase();
   if (!s) return null;
@@ -84,7 +69,6 @@ function parseTime(s) {
   return null;
 }
 const stamp = (sec) => { sec = Math.round(sec); const mm = Math.floor(sec / 60), ss = sec % 60; return `${mm}:${String(ss).padStart(2, '0')}`; };
-// "0:10-0:40", "10 40", "10 to 40"  ->  [10, 40]
 function parseRange(text) {
   const t = String(text || '').trim();
   const m = t.match(/^(\S+?)\s*(?:-|–|—|to|\s)\s*(\S+)$/i);
@@ -102,7 +86,6 @@ async function needMedia(client, m, kinds, usage) {
   return { t, mime, buf };
 }
 
-// ═════════════════════════ AUDIO TOOLS ═══════════════════════════════════
 async function convertAudio(buf, mime, outExt, codecArgs) {
   const dir = makeDir('aud');
   try {
@@ -114,15 +97,47 @@ async function convertAudio(buf, mime, outExt, codecArgs) {
   } finally { rmDir(dir); }
 }
 
-// queues for .mergeaudio  (sender -> { dir, items:[{file,kind}], timer })
+let ENCODERS = null;
+function hasEncoder(name) {
+  return new Promise((resolve) => {
+    if (ENCODERS) return resolve(ENCODERS.includes(name));
+    execFile(ffmpegBin(), ['-hide_banner', '-encoders'], { timeout: 20000, maxBuffer: 5 * 1024 * 1024 }, (_e, out) => {
+      ENCODERS = String(out || ''); resolve(ENCODERS.includes(name));
+    });
+  });
+}
+async function makeVoiceNote(buf, mime) {
+  const dir = makeDir('vn');
+  try {
+    const inFile = path.join(dir, `in.${extFor(mime)}`);
+    fs.writeFileSync(inFile, buf);
+    const out = path.join(dir, 'out.ogg');
+    const base = ['-y', '-i', inFile, '-vn', '-map_metadata', '-1', '-ar', '48000', '-ac', '1'];
+    const tries = [];
+    if (await hasEncoder('libopus')) tries.push(['-c:a', 'libopus', '-b:a', '32k', '-vbr', 'on', '-application', 'voip', '-f', 'ogg']);
+    tries.push(['-c:a', 'opus', '-strict', '-2', '-b:a', '32k', '-f', 'ogg']);
+    let lastErr = null;
+    for (const t of tries) {
+      try {
+        try { fs.rmSync(out, { force: true }); } catch (_) {}
+        await ff([...base, ...t, out]);
+        const info = await probe(out);
+        const head = fs.readFileSync(out).subarray(0, 4).toString('latin1');
+        const raw = fs.readFileSync(out);
+        if (head === 'OggS' && raw.length > 800 && info.seconds > 0.2) return { buf: raw, seconds: Math.max(1, Math.round(info.seconds)) };
+        lastErr = new Error('the converted file was empty');
+      } catch (e) { lastErr = e; }
+    }
+    throw new Error('this server\'s ffmpeg cannot make voice notes (' + String(lastErr && lastErr.message).slice(0, 120) + ')');
+  } finally { rmDir(dir); }
+}
+
 const mergeQueues = new Map();
 function dropQueue(sender) {
   const q = mergeQueues.get(sender);
   if (q) { clearTimeout(q.timer); rmDir(q.dir); mergeQueues.delete(sender); }
 }
 
-// ═════════════════════════ VIDEO TOOLS ═══════════════════════════════════
-// transparent PNG with outlined white text, used for subtitles and lyric lines
 async function textStrip(text, width, { maxHeight = 400, sizes = [64, 32] } = {}) {
   const Jimp = require('jimp');
   const fontsW = { 64: await Jimp.loadFont(Jimp.FONT_SANS_64_WHITE), 32: await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE) };
@@ -138,7 +153,6 @@ async function textStrip(text, width, { maxHeight = 400, sizes = [64, 32] } = {}
   return { png: await img.getBufferAsync(Jimp.MIME_PNG), h: th + pad * 2 };
 }
 
-// ═════════════════════════ LYRICS VIDEO helpers ══════════════════════════
 function parseLRC(lrc) {
   const lines = [];
   for (const raw of String(lrc || '').split('\n')) {
@@ -155,7 +169,6 @@ async function findLyrics(query, wantSeconds) {
   return { lines: parseLRC(best.syncedLyrics), title: best.trackName, artist: best.artistName, duration: best.duration };
 }
 
-// get the song's audio from the bot's own .play by catching what it would send
 async function songAudioViaPlay(client, m, ctx, query) {
   const play = require('./downloads').find(c => (c.command || []).includes('play'));
   if (!play) throw new Error('.play not found');
@@ -180,7 +193,6 @@ async function songAudioViaPlay(client, m, ctx, query) {
   throw new Error('unexpected audio format');
 }
 
-// ═════════════════════════ CONFESSIONS data ══════════════════════════════
 const CONF_FILE = path.join(process.cwd(), 'confess_data.json');
 let CONF = null;
 function loadConf() {
@@ -199,7 +211,6 @@ async function groupsFor(client, sender) {
     .sort((a, b) => a.subject.localeCompare(b.subject));
 }
 
-// ═════════════════════════ WHOIS data ════════════════════════════════════
 const COUNTRIES = {
   '254': 'Kenya 🇰🇪', '255': 'Tanzania 🇹🇿', '256': 'Uganda 🇺🇬', '250': 'Rwanda 🇷🇼', '257': 'Burundi 🇧🇮', '251': 'Ethiopia 🇪🇹',
   '252': 'Somalia 🇸🇴', '211': 'South Sudan 🇸🇸', '234': 'Nigeria 🇳🇬', '233': 'Ghana 🇬🇭', '27': 'South Africa 🇿🇦', '20': 'Egypt 🇪🇬',
@@ -214,8 +225,7 @@ function countryOf(digits) {
   return 'Unknown';
 }
 
-// ═════════════════════════ VOTE state ════════════════════════════════════
-const votes = {}; // chat -> { q, opts, ballots: Map(sender -> idx), starter, timer, endsAt }
+const votes = {};
 function tally(v) {
   const counts = v.opts.map(() => 0);
   for (const idx of v.ballots.values()) counts[idx]++;
@@ -226,7 +236,6 @@ function tally(v) {
   }).join('\n') + `\n\n🗳️ Total votes: ${total}`;
 }
 
-// ═════════════════════════ COLOR helpers ═════════════════════════════════
 const NAMED = {
   red: '#ff0000', green: '#008000', blue: '#0000ff', yellow: '#ffff00', orange: '#ffa500', purple: '#800080', pink: '#ffc0cb', black: '#000000',
   white: '#ffffff', gray: '#808080', grey: '#808080', brown: '#a52a2a', cyan: '#00ffff', magenta: '#ff00ff', gold: '#ffd700', silver: '#c0c0c0',
@@ -260,10 +269,8 @@ function nearestName(rgb) {
   return best;
 }
 
-// ═════════════════════════ COMMANDS ══════════════════════════════════════
 module.exports = [
 
-  // ───────────────────────── .tomp3 ──────────────────────────
   {
     command: ['tomp3'],
     aliases: ['toaudio2', 'extractaudio', 'mp3'],
@@ -280,7 +287,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .tovn ───────────────────────────
   {
     command: ['tovn'],
     aliases: ['tovoice', 'toptt', 'voicenote'],
@@ -291,13 +297,12 @@ module.exports = [
         const x = await needMedia(client, m, /audio|video/, '🎙️ Reply to an *audio*, *song* or *video* with *.tovn* to send it as a voice note.');
         if (!x) return;
         await m.reply('🎙️ _Making a voice note..._');
-        const out = await convertAudio(x.buf, x.mime, 'ogg', ['-c:a', 'libopus', '-b:a', '64k', '-ar', '48000', '-ac', '1', '-application', 'voip']);
-        await client.sendMessage(m.chat, { audio: out, mimetype: 'audio/ogg; codecs=opus', ptt: true }, { quoted: m });
+        const vn = await makeVoiceNote(x.buf, x.mime);
+        await client.sendMessage(m.chat, { audio: vn.buf, mimetype: 'audio/ogg; codecs=opus', ptt: true, seconds: vn.seconds }, { quoted: m });
       } catch (e) { m.reply('❌ Failed: ' + e.message); }
     }
   },
 
-  // ───────────────────────── .cutaudio ───────────────────────
   {
     command: ['cutaudio'],
     aliases: ['trimaudio', 'ringtone', 'cut'],
@@ -325,7 +330,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .mergeaudio ─────────────────────
   {
     command: ['mergeaudio'],
     aliases: ['joinaudio', 'mixaudio'],
@@ -370,7 +374,6 @@ module.exports = [
         return;
       }
 
-      // add the replied-to file to the list
       const t = mediaTarget(m);
       const mime = mimeOf(t);
       if (!t || !/audio|video/.test(mime)) {
@@ -394,7 +397,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .subtitle ───────────────────────
   {
     command: ['subtitle'],
     aliases: ['caption', 'addsub', 'subs'],
@@ -433,7 +435,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .screenshot ─────────────────────
   {
     command: ['screenshot'],
     aliases: ['vidframe', 'frame', 'grabframe'],
@@ -460,7 +461,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .lyricsvideo ────────────────────
   {
     command: ['lyricsvideo'],
     aliases: ['lyricvideo', 'lyricstatus', 'lvideo'],
@@ -487,19 +487,16 @@ module.exports = [
         const lines = lyr.lines.filter(l => l.t >= start - 0.2 && l.t < start + D).map((l, i, arr) => ({ ...l, end: Math.min(start + D, arr[i + 1] ? arr[i + 1].t : l.t + 4) }));
         if (!lines.length) return m.reply('❌ There are no lyrics at that start time. Try another one, e.g. *@0:30*');
 
-        // audio: the file you replied to, or the song through the bot\'s .play
         let audio;
         const qt = m.quoted && mimeOf(m.quoted).startsWith('audio') ? m.quoted : null;
         audio = qt ? await downloadTarget(client, qt) : await songAudioViaPlay(client, m, ctx, query);
         const audioFile = path.join(dir, 'song.mp3');
         fs.writeFileSync(audioFile, audio);
 
-        // cover picture
         const th = await axios.get(v.image || v.thumbnail, { responseType: 'arraybuffer', timeout: 20000, headers: { 'User-Agent': UA } });
         const coverFile = path.join(dir, 'cover.jpg');
         fs.writeFileSync(coverFile, Buffer.from(th.data));
 
-        // text pictures: title card + one per lyric line
         const W = 720, H = 1280;
         const title = String(lyr.title || v.title).slice(0, 60), artist = String(lyr.artist || v.author?.name || '').slice(0, 50);
         const head = await textStrip(`${title}\n${artist}`, W, { maxHeight: 220, sizes: [64, 32] });
@@ -511,7 +508,6 @@ module.exports = [
           lineFiles.push({ f, h: s.h });
         }
 
-        // build the video: blurred cover background, square cover on top, title, timed lyric lines
         const inputs = ['-loop', '1', '-framerate', '24', '-t', String(D), '-i', coverFile, '-ss', String(start), '-t', String(D), '-i', audioFile, '-loop', '1', '-framerate', '24', '-t', String(D), '-i', headFile];
         lineFiles.forEach(l => inputs.push('-loop', '1', '-framerate', '24', '-t', String(D), '-i', l.f));
         let fc = `[0:v]scale=-2:${H},crop=${W}:${H},boxblur=25:3,eq=brightness=-0.2[bg];` +
@@ -534,7 +530,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .confessions (admin switch) ─────
   {
     command: ['confessions'],
     aliases: ['confessmode'],
@@ -551,7 +546,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .confess (private chat) ─────────
   {
     command: ['confess'],
     aliases: ['confession', 'anon'],
@@ -585,7 +579,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .confesslog (owner) ─────────────
   {
     command: ['confesslog'],
     description: 'Owner only: see who sent the latest confessions (for moderation)',
@@ -598,7 +591,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .whois ──────────────────────────
   {
     command: ['whois'],
     aliases: ['userinfo', 'whoisthis', 'profile'],
@@ -656,7 +648,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .vote ───────────────────────────
   {
     command: ['vote'],
     aliases: ['poll2', 'ballot'],
@@ -678,7 +669,6 @@ module.exports = [
         clearTimeout(v.timer); delete votes[chat];
         return client.sendMessage(chat, { text: `🏁 *VOTE CLOSED*\n\n*${v.q}*\n\n${tally(v)}` }, { quoted: m });
       }
-      // casting a vote
       if (v && (/^\d{1,2}$/.test(a) || /^(yes|no)$/i.test(a))) {
         let idx = /^\d+$/.test(a) ? Number(a) - 1 : v.opts.findIndex(o => o.toLowerCase() === a.toLowerCase());
         if (idx < 0 || idx >= v.opts.length) return m.reply(`Pick a number from 1 to ${v.opts.length}.`);
@@ -686,7 +676,6 @@ module.exports = [
         v.ballots.set(m.sender, idx);
         return m.reply(`✅ ${changed ? 'Vote changed' : 'Vote counted'}: *${v.opts[idx]}*  (${v.ballots.size} voted)`);
       }
-      // starting a new vote
       if (v) return m.reply('A vote is already running here. Finish it first with *.vote end*');
       const parts = a.split('|').map(s => s.trim()).filter(Boolean);
       const q = parts.shift();
@@ -704,7 +693,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .meme ───────────────────────────
   {
     command: ['meme'],
     aliases: ['randommeme', 'funny'],
@@ -730,7 +718,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .shorten ────────────────────────
   {
     command: ['shorten'],
     aliases: ['short', 'shorturl', 'tinyurl'],
@@ -761,7 +748,6 @@ module.exports = [
     }
   },
 
-  // ───────────────────────── .color ──────────────────────────
   {
     command: ['color'],
     aliases: ['colour', 'hex', 'colorinfo'],

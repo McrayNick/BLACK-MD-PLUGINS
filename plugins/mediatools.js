@@ -1,28 +1,11 @@
 'use strict';
 
-/**
- * mediatools.js  —  new BLACK-MD commands
- *   .circle                 round sticker from an image / short video / GIF
- *   .speed <0.25-4>         change the speed of a video or audio   (.speed 2, .speed 0.5)
- *   .reverse                play a video or audio backwards
- *   .bass [1-30]            heavier bass on audio / voice note / video sound
- *   .nightcore              faster + higher pitch
- *   .slow                   slowed + reverb
- *   .qr <text>              make a QR code
- *   .readqr                 read a QR code from a picture
- *   .statusall              send you the statuses the bot has seen from a contact (owner)
- *
- * Needs only what your bot already has: ffmpeg (found the same way stickerlite finds it),
- * ../lib/stickerlite, axios, form-data.
- */
-
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 const axios = global.axios || require('axios');
 
-// ── helpers ──────────────────────────────────────────────────────────────
 function ffmpegBin() {
   try { return require('../lib/stickerlite').ffmpegBin(); } catch (_) { return 'ffmpeg'; }
 }
@@ -43,7 +26,6 @@ function makeDir(tag) {
 }
 const rmDir = (d) => { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} };
 
-// the message that carries the media: the one you replied to, or the command message itself
 function mediaTarget(m) {
   const pick = (t) => (t && ((t.msg || t).mimetype || '')) ? t : null;
   return pick(m.quoted) || pick(m);
@@ -67,7 +49,6 @@ const extFor = (mime) => (/webp/.test(mime) ? 'webp' : /png/.test(mime) ? 'png' 
   : /mp4|video/.test(mime) ? 'mp4' : /ogg|opus/.test(mime) ? 'ogg' : /mpeg|mp3/.test(mime) ? 'mp3'
   : /audio/.test(mime) ? 'm4a' : 'jpg');
 
-// ffmpeg's atempo only accepts 0.5 – 2 per step, so chain several for bigger changes
 function atempoChain(x) {
   const parts = [];
   while (x > 2) { parts.push('atempo=2'); x /= 2; }
@@ -76,7 +57,6 @@ function atempoChain(x) {
   return parts.join(',');
 }
 
-// ── .circle ──────────────────────────────────────────────────────────────
 const CIRCLE = "crop=min(iw\\,ih):min(iw\\,ih),scale=512:512:flags=lanczos,format=rgba," +
   "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte(hypot(X-W/2+0.5,Y-H/2+0.5),W/2),255,0)'";
 
@@ -102,12 +82,10 @@ async function circleSticker(buf, mime, packName, authorName) {
       await ff(['-y', '-i', inFile, '-frames:v', '1', '-vf', CIRCLE, out]);
       webp = fs.readFileSync(out);
     }
-    // stickerlite adds the pack name / author (for the animated webp it only swaps the metadata)
     return await new Sticker(webp, { pack: packName, author: authorName, type: StickerTypes.FULL, quality: 90 }).toBuffer();
   } finally { rmDir(dir); }
 }
 
-// ── speed / reverse / audio effects ──────────────────────────────────────
 async function runVideoFx(buf, mime, { vf, af }) {
   const dir = makeDir('fx');
   try {
@@ -117,9 +95,9 @@ async function runVideoFx(buf, mime, { vf, af }) {
     const base = ['-y', '-i', inFile];
     const enc = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p',
       '-vf', `${vf},scale=trunc(iw/2)*2:trunc(ih/2)*2`, '-movflags', 'faststart'];
-    try { // with sound
+    try {
       await ff([...base, ...enc, '-af', af, '-c:a', 'aac', '-b:a', '128k', out], 180000);
-    } catch (e) { // clip without sound
+    } catch (e) {
       await ff([...base, ...enc, '-an', out], 180000);
     }
     return fs.readFileSync(out);
@@ -137,8 +115,6 @@ async function runAudioFx(buf, mime, af) {
   } finally { rmDir(dir); }
 }
 
-// a video with the effect applied to its sound; the picture is kept as it is
-// (vspeed > 0 also changes the picture speed so sound and picture stay together, e.g. nightcore)
 async function runVideoSoundFx(buf, mime, af, vspeed) {
   const dir = makeDir('vfx');
   try {
@@ -151,7 +127,7 @@ async function runVideoSoundFx(buf, mime, af, vspeed) {
     try {
       await ff(['-y', '-i', inFile, '-map', '0:v:0', '-map', '0:a:0', ...vArgs, '-af', af, '-c:a', 'aac', '-b:a', '160k', '-movflags', 'faststart', out], 180000);
     } catch (e) {
-      if (!vspeed) { // some clips can't be copied as they are: re-encode instead
+      if (!vspeed) {
         await ff(['-y', '-i', inFile, '-map', '0:v:0', '-map', '0:a:0', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p', '-af', af, '-c:a', 'aac', '-b:a', '160k', '-movflags', 'faststart', out], 180000);
       } else throw e;
     }
@@ -159,7 +135,6 @@ async function runVideoSoundFx(buf, mime, af, vspeed) {
   } finally { rmDir(dir); }
 }
 
-// shared body for commands that take audio or a video's sound
 async function audioEffect(client, m, af, label, vspeed = 0) {
   const t = mediaTarget(m);
   const mime = mimeOf(t);
@@ -168,7 +143,6 @@ async function audioEffect(client, m, af, label, vspeed = 0) {
     await m.reply('🎛️ _Applying effect..._');
     const buf = await downloadTarget(client, t);
     if (/video/.test(mime)) {
-      // video in -> video out, with the effect on its sound
       let out;
       try { out = await runVideoSoundFx(buf, mime, af, vspeed); }
       catch (e) { return m.reply('❌ Could not apply the effect. The video may have no sound.'); }
@@ -179,9 +153,8 @@ async function audioEffect(client, m, af, label, vspeed = 0) {
   } catch (e) { m.reply('❌ Failed: ' + e.message); }
 }
 
-// ── status recorder (for .statusall) ─────────────────────────────────────
 const STATUS_TTL = 24 * 3600 * 1000;
-const seenStatuses = []; // { id, from, name, time, message, key }
+const seenStatuses = [];
 function recordStatus(msg) {
   try {
     if (!msg || msg.key?.remoteJid !== 'status@broadcast' || msg.key.fromMe || !msg.message) return;
@@ -197,7 +170,6 @@ function ensureRecorder(client) {
   client.__statusRecorder = true;
   client.ev.on('messages.upsert', ({ messages }) => { for (const x of messages || []) recordStatus(x); });
 }
-// statuses from the bot's own message store too, when it keeps one
 function storeStatuses(store) {
   try {
     const box = store?.messages?.['status@broadcast'];
@@ -208,7 +180,6 @@ function storeStatuses(store) {
 const statusKind = (msg) => msg.imageMessage ? 'image' : msg.videoMessage ? 'video' : msg.audioMessage ? 'audio'
   : (msg.extendedTextMessage || msg.conversation) ? 'text' : 'other';
 
-// ── commands ─────────────────────────────────────────────────────────────
 module.exports = [
   {
     command: ['circle'],
@@ -232,15 +203,15 @@ module.exports = [
   },
 
   {
-    command: ['speed'],
+    command: ['xspeed'],
     aliases: ['changespeed', 'fast'],
-    description: 'Change the speed of a video or audio (e.g. .speed 2 or .speed 0.5)',
+    description: 'Change the speed of a video or audio (e.g. .xspeed 2 or .xspeed 0.5)',
     category: 'media',
     handler: async (client, m, { text }) => {
       ensureRecorder(client);
       const t = mediaTarget(m);
       const mime = mimeOf(t);
-      if (!t || !/video|audio/.test(mime)) return m.reply('⏩ Reply to a video or audio with *.speed 2* (faster) or *.speed 0.5* (slower).\nRange: 0.25 – 4');
+      if (!t || !/video|audio/.test(mime)) return m.reply('⏩ Reply to a video or audio with *.xspeed 2* (faster) or *.xspeed 0.5* (slower).\nRange: 0.25 – 4');
       let x = parseFloat(String(text || '').replace(',', '.'));
       if (!x || isNaN(x)) x = 2;
       x = Math.min(4, Math.max(0.25, x));
@@ -332,7 +303,7 @@ module.exports = [
       if (data.length > 1000) return m.reply('⚠️ Text is too long for a QR code (max 1000 characters).');
       try {
         let img;
-        try { // offline, if the "qrcode" package is installed
+        try {
           img = await require('qrcode').toBuffer(data, { width: 600, margin: 2 });
         } catch (_) {
           const r = await axios.get(`https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=10&data=${encodeURIComponent(data)}`, { responseType: 'arraybuffer', timeout: 20000 });
@@ -379,7 +350,6 @@ module.exports = [
       const now = Date.now();
       for (let i = seenStatuses.length - 1; i >= 0; i--) if (now - seenStatuses[i].time > STATUS_TTL) seenStatuses.splice(i, 1);
 
-      // group by person
       const people = {};
       for (const s of seenStatuses) (people[s.from] = people[s.from] || { jid: s.from, name: s.name, items: [] }).items.push(s);
       const list = Object.values(people).sort((a, b) => b.items.length - a.items.length);

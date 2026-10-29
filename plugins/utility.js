@@ -1,4 +1,3 @@
-
 module.exports = [
 
   {
@@ -391,14 +390,65 @@ module.exports = [
     description: 'Get bot source code and stats',
     category: 'utility',
     handler: async (client, m, { pushname }) => {
+      // Sends the repo card with image, footer and two URL buttons (Fork Repo / Get Session)
+      const sendRepoCard = async (imageUrl, caption) => {
+        try {
+          let baileys;
+          for (const name of ['@whiskeysockets/baileys', 'baileys', '@adiwajshing/baileys']) {
+            try { baileys = require(name); break; } catch {}
+          }
+          const { generateWAMessageFromContent, prepareWAMessageMedia, proto } = baileys;
+          const media = await prepareWAMessageMedia(
+            { image: { url: imageUrl } },
+            { upload: client.waUploadToServer }
+          );
+          const msg = generateWAMessageFromContent(m.chat, {
+            viewOnceMessage: {
+              message: {
+                messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
+                interactiveMessage: proto.Message.InteractiveMessage.create({
+                  body: proto.Message.InteractiveMessage.Body.create({ text: caption }),
+                  footer: proto.Message.InteractiveMessage.Footer.create({ text: 'BLACK-MD' }),
+                  header: proto.Message.InteractiveMessage.Header.create({
+                    hasMediaAttachment: true,
+                    imageMessage: media.imageMessage
+                  }),
+                  nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+                    buttons: [
+                      {
+                        name: 'cta_url',
+                        buttonParamsJson: JSON.stringify({
+                          display_text: 'Fork Repo',
+                          url: 'https://github.com/Blackie254/black-super-bot/fork',
+                          merchant_url: 'https://github.com/Blackie254/black-super-bot/fork'
+                        })
+                      },
+                      {
+                        name: 'cta_url',
+                        buttonParamsJson: JSON.stringify({
+                          display_text: 'Get Session',
+                          url: 'https://pair.blueblizzards.site',
+                          merchant_url: 'https://pair.blueblizzards.site'
+                        })
+                      }
+                    ]
+                  })
+                })
+              }
+            }
+          }, { quoted: m });
+          await client.relayMessage(m.chat, msg.message, { messageId: msg.key.id });
+        } catch (e) {
+          // fallback: plain image + caption if buttons are unsupported
+          await client.sendMessage(m.chat, { image: { url: imageUrl }, caption }, { quoted: m });
+        }
+      };
       try {
         const repoRes = await global.axios.get('https://api.github.com/repos/Blackie254/black-super-bot', { timeout: 10000 });
         const userRes = await global.axios.get('https://api.github.com/users/Blackie254', { timeout: 10000 });
         const r = repoRes.data;
         const u = userRes.data;
-        client.sendMessage(m.chat, {
-          image: { url: u.avatar_url },
-          caption:
+        await sendRepoCard(u.avatar_url,
             ` Hello 👋 *${pushname}*,\n` +
             `╔══≪ ✦ ≫══════════≪ ✦ ≫══╗\n` +
             `              𝐁𝐋𝐀𝐂𝐊-𝐌𝐃\n` +
@@ -422,11 +472,9 @@ module.exports = [
             `╔══≪ ✦ ≫═══════════════≪ ✦ ≫══╗\n` +
             `       𝗠𝗮𝗱𝗲 𝗼𝗻 𝗲𝗮𝗿𝘁𝗵 𝗯𝘆 𝗛𝘂𝗺𝗮𝗻𝘀🔥!\n` +
             `╚══≪ ✦ ≫═══════════════≪ ✦ ≫══╝`
-        }, { quoted: m });
+        );
       } catch (err) {
-        client.sendMessage(m.chat, {
-          image: { url: 'https://u.pone.rs/cnaocqvu.png' },
-          caption:
+        await sendRepoCard('https://u.pone.rs/cnaocqvu.png',
             ` Hello 👋 *${pushname}*,\n` +
             `╔══≪ ✦ ≫══════════≪ ✦ ≫══╗\n` +
             `            𝐁𝐋𝐀𝐂𝐊-𝐌𝐃 \n` +
@@ -445,7 +493,7 @@ module.exports = [
             `╔══≪ ✦ ≫═══════════════≪ ✦ ≫══╗\n` +
             `        𝗠𝗮𝗱𝗲 𝗼𝗻 𝗲𝗮𝗿𝘁𝗵 𝗯𝘆 𝗛𝘂𝗺𝗮𝗻𝘀🔥!\n` +
             `╚══≪ ✦ ≫═══════════════≪ ✦ ≫══╝`
-        }, { quoted: m });
+        );
       }
     }
   },

@@ -437,10 +437,36 @@ module.exports = [
               }
             }
           }, { quoted: m });
-          await client.relayMessage(m.chat, msg.message, { messageId: msg.key.id });
+          await client.relayMessage(m.chat, msg.message, {
+            messageId: msg.key.id,
+            additionalNodes: [{
+              tag: 'biz',
+              attrs: {},
+              content: [{
+                tag: 'interactive',
+                attrs: { type: 'native_flow', v: '1' },
+                content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }]
+              }]
+            }]
+          });
         } catch (e) {
-          // fallback: plain image + caption if buttons are unsupported
-          await client.sendMessage(m.chat, { image: { url: imageUrl }, caption }, { quoted: m });
+          console.log('[repo] interactive send failed:', e && e.message ? e.message : e);
+          try {
+            // second attempt: forks that support interactiveButtons directly
+            await client.sendMessage(m.chat, {
+              image: { url: imageUrl },
+              caption,
+              footer: 'BLACK-MD',
+              interactiveButtons: [
+                { name: 'cta_url', buttonParamsJson: JSON.stringify({ display_text: 'Fork Repo', url: 'https://github.com/Blackie254/black-super-bot/fork' }) },
+                { name: 'cta_url', buttonParamsJson: JSON.stringify({ display_text: 'Get Session', url: 'https://pair.blueblizzards.site' }) }
+              ]
+            }, { quoted: m });
+          } catch (e2) {
+            console.log('[repo] interactiveButtons failed:', e2 && e2.message ? e2.message : e2);
+            // last resort: plain image + caption
+            await client.sendMessage(m.chat, { image: { url: imageUrl }, caption }, { quoted: m });
+          }
         }
       };
       try {

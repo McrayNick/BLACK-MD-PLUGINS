@@ -41,6 +41,10 @@ function isOwner(client, m, ctx) {
   return n === numOf(client.user && client.user.id) || ownerNumbers().has(n);
 }
 
+let hooked = false;
+const STATS = { seen: 0, cached: 0, revokes: 0, missed: 0, sent: 0, error: '' };
+const fail = (e) => { STATS.error = String((e && e.message) || e).slice(0, 120); };
+
 const DONE = new Set();
 const markDone = (id) => { if (DONE.has(id)) return false; DONE.add(id); if (DONE.size > 1000) DONE.delete(DONE.values().next().value); return true; };
 
@@ -170,6 +174,7 @@ async function capture(client, msg) {
     vo, ts: (Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000)) * 1000, at: Date.now(), file: null, forwarded: false
   };
   CACHE.set(e.id, e);
+  STATS.cached++;
   evict();
 
   const hasMedia = !!d.node;
@@ -182,14 +187,15 @@ async function capture(client, msg) {
           e.file = path.join(CACHE_DIR, e.id.replace(/[^\w-]/g, '_'));
           fs.writeFileSync(e.file, buf);
         }
-      } catch (_) {}
+      } catch (err) { fail(err); }
     }
     if (vo && s.vv && markDone('vv' + e.id)) {
       try {
         const head = await buildHead(client, e, '👁️ View-once saved ·', null);
         await deliver(client, selfJid(client), e, head);
         e.forwarded = true;
-      } catch (_) {}
+        STATS.sent++;
+      } catch (err) { fail(err); }
     }
   };
   if (vo) await enqueue(job); else enqueue(job);
@@ -198,8 +204,10 @@ async function capture(client, msg) {
 async function onRevoke(client, id, deleter) {
   const s = getSettings();
   if (!s.on) return;
+  STATS.revokes++;
   const e = CACHE.get(id);
-  if (!e || !scopeOk(e.chat)) return;
+  if (!e) { STATS.missed++; return; }
+  if (!scopeOk(e.chat)) return;
   if (!markDone('del' + id)) return;
   const dest = s.dest === 'chat' ? e.chat : selfJid(client);
   try {
@@ -210,11 +218,13 @@ async function onRevoke(client, id, deleter) {
     }
     const head = await buildHead(client, e, e.vo ? '🗑️ Deleted view-once ·' : '🗑️ Deleted message ·', deleter);
     await deliver(client, dest, e, head, [deleter]);
-  } catch (_) {}
+    STATS.sent++;
+  } catch (err) { fail(err); }
 }
 
 async function onUpsert(client, msg) {
   if (!msg || !msg.message || !msg.key) return;
+  STATS.seen++;
   const { inner } = unwrap(msg.message);
   const pm = (msg.message && msg.message.protocolMessage) || (inner && inner.protocolMessage);
   if (pm) {
@@ -235,19 +245,29 @@ async function onUpdate(client, upd) {
 function ensureHooks(client) {
   if (!client || client.__bmAD || !client.ev || typeof client.ev.on !== 'function') return false;
   client.__bmAD = true;
+  hooked = true;
   client.ev.on('messages.upsert', async (u) => { for (const msg of (u && u.messages) || []) { try { await onUpsert(client, msg); } catch (_) {} } });
   client.ev.on('messages.update', async (list) => { for (const x of list || []) { try { await onUpdate(client, x); } catch (_) {} } });
   return true;
 }
+const looksLikeSock = (v) => v && typeof v === 'object' && v.ev && typeof v.ev.on === 'function' && typeof v.sendMessage === 'function';
+function findSocket() {
+  for (const k of ['conn', 'client', 'sock', 'Matrix', 'bot', 'socket', 'sock2']) { if (looksLikeSock(global[k])) return global[k]; }
+  for (const k of Object.keys(global)) { try { if (looksLikeSock(global[k])) return global[k]; } catch (_) {} }
+  for (const mod of Object.values(require.cache || {})) {
+    const ex = mod && mod.exports;
+    if (!ex || (typeof ex !== 'object' && typeof ex !== 'function')) continue;
+    try {
+      if (looksLikeSock(ex)) return ex;
+      for (const k of Object.keys(ex)) { if (looksLikeSock(ex[k])) return ex[k]; }
+    } catch (_) {}
+  }
+  return null;
+}
 (() => {
-  let tries = 0;
-  const t = setInterval(() => {
-    for (const k of ['conn', 'client', 'sock', 'Matrix']) { try { if (global[k] && ensureHooks(global[k])) { clearInterval(t); return; } } catch (_) {} }
-    if (++tries > 60) clearInterval(t);
-  }, 3000);
+  const t = setInterval(() => { try { const c = findSocket(); if (c && ensureHooks(c)) clearInterval(t); } catch (_) {} }, 4000);
   if (t.unref) t.unref();
 })();
-
 const onOff = (v) => (v ? 'ON' : 'OFF');
 function statusText(p) {
   const s = getSettings();
@@ -258,6 +278,10 @@ function statusText(p) {
     `Send to: *${s.dest === 'chat' ? 'same chat' : 'my DM'}*`,
     `Scope: *${s.scope}*`,
     `Auto-save view-once: *${onOff(s.vv)}*`,
+    '',
+    `Listener: *${hooked ? 'running' : 'NOT running'}*`,
+    `Seen ${STATS.seen} · cached ${STATS.cached} · deletes ${STATS.revokes} (${STATS.missed} not in cache) · sent ${STATS.sent}`,
+    STATS.error ? `Last error: ${STATS.error}` : '',
     '',
     `*${p}bmguard on / off*`,
     `*${p}bmguard dm / chat*`,

@@ -394,6 +394,13 @@ const effectCommands = Object.keys(STYLES).map((name) => ({
   }
 }));
 
+const sans = (s) => String(s).replace(/[A-Za-z0-9]/g, (c) => {
+  const k = c.charCodeAt(0);
+  if (k >= 97) return String.fromCodePoint(0x1D5EE + k - 97);
+  if (k >= 65) return String.fromCodePoint(0x1D5D4 + k - 65);
+  return String.fromCodePoint(0x1D7EC + k - 48);
+});
+
 const menu = {
   command: ['ephotomenu'],
   aliases: ['texteffects', 'effectsmenu', 'logomenu'],
@@ -401,8 +408,8 @@ const menu = {
   category: 'logo',
   handler: async (client, m, { prefix }) => {
     const p = typeof prefix === 'string' && prefix ? prefix : '.';
-    const block = (title, names) => `┌──┤ ${title} ├\n` + names.map(n => `│ ${n}`).join('\n') + '\n└──────────';
-    m.reply(`${block('TEXT EFFECTS · NEON', NEON_NAMES)}\n\n${block('TEXT EFFECTS · 3D', D3_NAMES)}\n\nUse: *${p}<effect> Your text*\nExample: *${p}neon Black Merchant*\n${TAG}`);
+    const block = (title, names) => `┌──┤ ${sans(title)} ├\n` + names.map(n => `│ ${sans(n)}`).join('\n') + '\n└──────────';
+    m.reply(`${block('TEXT EFFECTS · NEON', NEON_NAMES)}\n\n${block('TEXT EFFECTS · 3D', D3_NAMES)}\n\nUse: ${p}${sans('effect')} Your text\nExample: ${p}${sans('neon')} Black Merchant\n${TAG}`);
   }
 };
 

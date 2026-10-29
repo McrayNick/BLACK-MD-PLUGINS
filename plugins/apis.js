@@ -356,6 +356,16 @@ const commands = defs.map((d) => ({
   }
 }));
 
+const GROUPS = [
+  ['WEATHER · WORLD', ['skycast', 'sunwatch', 'nation', 'issnow', 'quakewatch']],
+  ['MONEY', ['coinwatch', 'fxrate']],
+  ['WORDS', ['lexicon', 'wikisum', 'slangdef', 'rhymes', 'synonyms', 'xtrans']],
+  ['FAITH', ['verse', 'salat']],
+  ['FUN', ['brainbolt', 'jokebox', 'factoid', 'counsel', 'wisdom', 'doggo', 'kitty', 'foxy', 'namelens']],
+  ['ENTERTAINMENT', ['pokedex', 'animeinfo', 'tunesearch', 'bookfind', 'mixology', 'mealidea']],
+  ['DEV', ['gitcard', 'npmcard', 'hnews']]
+];
+
 commands.push({
   command: ['apimenu'],
   aliases: ['livetools', 'webtools'],
@@ -363,8 +373,12 @@ commands.push({
   category: 'tools',
   handler: async (client, m, ctx) => {
     const p = typeof ctx.prefix === 'string' && ctx.prefix ? ctx.prefix : '.';
-    const rows = defs.map(d => { const u = d.usage.split('  ')[0]; const sp = u.indexOf(' '); return `${p}${sans(sp < 0 ? u : u.slice(0, sp))}${sp < 0 ? '' : u.slice(sp)}\n   ${d.description}`; });
-    return m.reply([`*${BM} · ${sans('LIVE TOOLS')}*`, '', ...rows, '', TAG].join('\n'));
+    const block = (title, names) => `┌──┤ ${sans(title)} ├\n` + names.map(n => `│ ${sans(n)}`).join('\n') + '\n└──────────';
+    const listed = new Set(GROUPS.flatMap(g => g[1]));
+    const rest = defs.map(d => d.command[0]).filter(n => !listed.has(n));
+    const blocks = GROUPS.map(g => block(g[0], g[1]));
+    if (rest.length) blocks.push(block('MORE', rest));
+    return m.reply(`${blocks.join('\n\n')}\n\nUse: ${p}${sans('command')} your input\nExample: ${p}${sans('skycast')} Nairobi\n${TAG}`);
   }
 });
 

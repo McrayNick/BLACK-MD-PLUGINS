@@ -390,7 +390,19 @@ module.exports = [
     description: 'Get bot source code and stats',
     category: 'utility',
     handler: async (client, m, { pushname }) => {
-      // Sends the repo card with image, footer and two URL buttons (Fork Repo / Get Session)
+      const REPO_URL = 'https://github.com/Blackie254/black-super-bot';
+      const urlBtn = (text, url) => ({
+        name: 'cta_url',
+        buttonParamsJson: JSON.stringify({ display_text: text, url, merchant_url: url })
+      });
+      const buttons = [
+        urlBtn('Fork Repo', `${REPO_URL}/fork`),
+        urlBtn('Get Session', 'https://pair.blueblizzards.site'),
+        urlBtn('Dev1', 'https://github.com/Blackie254'),
+        urlBtn('Dev2', 'https://github.com/McrayNick')
+      ];
+
+      // Sends the repo card: image + caption + footer + URL buttons
       const sendRepoCard = async (imageUrl, caption) => {
         try {
           let baileys;
@@ -414,24 +426,8 @@ module.exports = [
                     imageMessage: media.imageMessage
                   }),
                   nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-                    buttons: [
-                      {
-                        name: 'cta_url',
-                        buttonParamsJson: JSON.stringify({
-                          display_text: 'Fork Repo',
-                          url: 'https://github.com/Blackie254/black-super-bot/fork',
-                          merchant_url: 'https://github.com/Blackie254/black-super-bot/fork'
-                        })
-                      },
-                      {
-                        name: 'cta_url',
-                        buttonParamsJson: JSON.stringify({
-                          display_text: 'Get Session',
-                          url: 'https://pair.blueblizzards.site',
-                          merchant_url: 'https://pair.blueblizzards.site'
-                        })
-                      }
-                    ]
+                    buttons,
+                    messageParamsJson: ''
                   })
                 })
               }
@@ -452,74 +448,43 @@ module.exports = [
         } catch (e) {
           console.log('[repo] interactive send failed:', e && e.message ? e.message : e);
           try {
-            // second attempt: forks that support interactiveButtons directly
             await client.sendMessage(m.chat, {
               image: { url: imageUrl },
               caption,
               footer: 'BLACK-MD',
-              interactiveButtons: [
-                { name: 'cta_url', buttonParamsJson: JSON.stringify({ display_text: 'Fork Repo', url: 'https://github.com/Blackie254/black-super-bot/fork' }) },
-                { name: 'cta_url', buttonParamsJson: JSON.stringify({ display_text: 'Get Session', url: 'https://pair.blueblizzards.site' }) }
-              ]
+              interactiveButtons: buttons
             }, { quoted: m });
           } catch (e2) {
             console.log('[repo] interactiveButtons failed:', e2 && e2.message ? e2.message : e2);
-            // last resort: plain image + caption
             await client.sendMessage(m.chat, { image: { url: imageUrl }, caption }, { quoted: m });
           }
         }
       };
+
+      const buildCaption = (stars, forks) =>
+        ` Hello 👋 *${pushname}*,\n` +
+        `╔══≪ ✦ ≫══════════≪ ✦ ≫══╗\n` +
+        `              𝐁𝐋𝐀𝐂𝐊-𝐌𝐃\n` +
+        `    The Ultimate WhatsApp Bot\n` +
+        `╚══≪ ✦ ≫══════════≪ ✦ ≫══╝\n\n` +
+        `⭐ Stars: ${stars}\n` +
+        `🍴 Forks: ${forks}\n\n` +
+        `⚙️ 𝐑𝐞𝐪𝐮𝐢𝐫𝐞𝐦𝐞𝐧𝐭𝐬:\n` +
+        `   ✓ Complete all variables\n` +
+        `   ✓ Keep API keys secure\n` +
+        `   ✓ Deploy properly\n\n` +
+        `╔══≪ ✦ ≫══════════≪ ✦ ≫══╗\n` +
+        `   𝗠𝗮𝗱𝗲 𝗼𝗻 𝗲𝗮𝗿𝘁𝗵 𝗯𝘆 𝗛𝘂𝗺𝗮𝗻𝘀🔥!\n` +
+        `╚══≪ ✦ ≫══════════≪ ✦ ≫══╝`;
+
       try {
         const repoRes = await global.axios.get('https://api.github.com/repos/Blackie254/black-super-bot', { timeout: 10000 });
         const userRes = await global.axios.get('https://api.github.com/users/Blackie254', { timeout: 10000 });
         const r = repoRes.data;
         const u = userRes.data;
-        await sendRepoCard(u.avatar_url,
-            ` Hello 👋 *${pushname}*,\n` +
-            `╔══≪ ✦ ≫══════════≪ ✦ ≫══╗\n` +
-            `              𝐁𝐋𝐀𝐂𝐊-𝐌𝐃\n` +
-            `    The Ultimate WhatsApp Bot\n` +
-            `╚══≪ ✦ ≫══════════≪ ✦ ≫══╝\n\n` +
-            `🔷 𝐆𝐢𝐭𝐇𝐮𝐛 𝐑𝐞𝐩𝐨:\n` +
-            `   ↳ ${r.html_url}\n` +
-            `   ⭐ Stars: ${r.stargazers_count}\n` +
-            `   🍴 Forks: ${r.forks_count}\n` +
-            `   ★ Don't forget to Fork & Star our repo!\n\n` +
-            `👤 𝐃𝐞𝐯𝐞𝐥𝐨𝐩𝐞𝐫:\n` +
-            `   ↳ ${u.name || 'Blackie254'} => https://github.com/Blackie254\n` +
-            `   ↳ McrayNick  => https://github.com/McrayNick\n\n` +
-            `🔶 𝐖𝐡𝐚𝐭𝐬𝐀𝐩𝐩 𝐏𝐚𝐢𝐫𝐢𝐧𝐠:\n` +
-            `   ↳ https://pair.blueblizzards.site\n` +
-            `   ★ Save your Session-ID!\n\n` +
-            `⚙️ 𝐑𝐞𝐪𝐮𝐢𝐫𝐞𝐦𝐞𝐧𝐭𝐬:\n` +
-            `   ✓ Complete all variables\n` +
-            `   ✓ Keep API keys secure\n` +
-            `   ✓ Deploy properly\n\n` +
-            `╔══≪ ✦ ≫═══════════════≪ ✦ ≫══╗\n` +
-            `       𝗠𝗮𝗱𝗲 𝗼𝗻 𝗲𝗮𝗿𝘁𝗵 𝗯𝘆 𝗛𝘂𝗺𝗮𝗻𝘀🔥!\n` +
-            `╚══≪ ✦ ≫═══════════════≪ ✦ ≫══╝`
-        );
+        await sendRepoCard(u.avatar_url, buildCaption(r.stargazers_count, r.forks_count));
       } catch (err) {
-        await sendRepoCard('https://u.pone.rs/cnaocqvu.png',
-            ` Hello 👋 *${pushname}*,\n` +
-            `╔══≪ ✦ ≫══════════≪ ✦ ≫══╗\n` +
-            `            𝐁𝐋𝐀𝐂𝐊-𝐌𝐃 \n` +
-            ` The Ultimate WhatsApp Bot\n` +
-            `╚══≪ ✦ ≫══════════≪ ✦ ≫══╝\n\n` +
-            `🔷 𝐆𝐢𝐭𝐇𝐮𝐛 𝐑𝐞𝐩𝐨:\n` +
-            `   ↳ https://github.com/Blackie254/black-super-bot\n` +
-            `   ★ Don't forget to Fork & Star!\n\n` +
-            `🔶 𝐖𝐡𝐚𝐭𝐬𝐀𝐩𝐩 𝐏𝐚𝐢𝐫𝐢𝐧𝐠:\n` +
-            `   ↳ https://blackmd-pairing.onrender.com\n` +
-            `   ★ Save your Session-ID!\n\n` +
-            `⚙️ 𝐑𝐞𝐪𝐮𝐢𝐫𝐞𝐦𝐞𝐧𝐭𝐬:\n` +
-            `   ✓ Complete all variables\n` +
-            `   ✓ Keep API keys secure\n` +
-            `   ✓ Deploy properly\n\n` +
-            `╔══≪ ✦ ≫═══════════════≪ ✦ ≫══╗\n` +
-            `        𝗠𝗮𝗱𝗲 𝗼𝗻 𝗲𝗮𝗿𝘁𝗵 𝗯𝘆 𝗛𝘂𝗺𝗮𝗻𝘀🔥!\n` +
-            `╚══≪ ✦ ≫═══════════════≪ ✦ ≫══╝`
-        );
+        await sendRepoCard('https://u.pone.rs/cnaocqvu.png', buildCaption('—', '—'));
       }
     }
   },

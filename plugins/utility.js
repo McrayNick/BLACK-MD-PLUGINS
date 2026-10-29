@@ -463,19 +463,19 @@ module.exports = [
 
       const buildCaption = (stars, forks) =>
         `Hello 👋 *${pushname}*,\n\n` +
-        `╔═≪ ✦ ≫════≪ ✦ ≫═╗\n` +
-        `        𝐁𝐋𝐀𝐂𝐊-𝐌𝐃\n` +
-        `  The Ultimate WhatsApp Bot\n` +
-        `╚═≪ ✦ ≫════≪ ✦ ≫═╝\n\n` +
+        `╔═≪ ✦ ≫══════════≪ ✦ ≫═╗\n` +
+        `                    𝐁𝐋𝐀𝐂𝐊-𝐌𝐃\n` +
+        `     The Ultimate WhatsApp Bot\n` +
+        `╚═≪ ✦ ≫══════════≪ ✦ ≫═╝\n\n` +
         `⭐ *Stars:* ${stars}\n` +
         `🍴 *Forks:* ${forks}\n\n` +
         `⚙️ *𝐑𝐞𝐪𝐮𝐢𝐫𝐞𝐦𝐞𝐧𝐭𝐬*\n` +
         `✓ Complete all variables\n` +
         `✓ Keep API keys secure\n` +
         `✓ Deploy properly\n\n` +
-        `╔═≪ ✦ ≫════≪ ✦ ≫═╗\n` +
+        `╔═≪ ✦ ≫══════════≪ ✦ ≫═╗\n` +
         `  𝗠𝗮𝗱𝗲 𝗼𝗻 𝗲𝗮𝗿𝘁𝗵 𝗯𝘆 𝗛𝘂𝗺𝗮𝗻𝘀 🔥\n` +
-        `╚═≪ ✦ ≫════≪ ✦ ≫═╝`;
+        `╚═≪ ✦ ≫══════════≪ ✦ ≫═╝`;
 
       try {
         const repoRes = await global.axios.get('https://api.github.com/repos/Blackie254/black-super-bot', { timeout: 10000 });

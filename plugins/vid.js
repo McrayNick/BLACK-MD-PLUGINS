@@ -60,7 +60,7 @@ function cookieArgs() {
   return [];
 }
 
-function ydl(args, timeout = 180000) {
+function ydlOnce(args, timeout) {
   return ensureYtDlp().then(bin => new Promise((resolve, reject) => {
     const child = spawn(bin, ['--no-warnings', '--no-progress', '--socket-timeout', '25', '--retries', '2', '--ffmpeg-location', ffmpegBin(), ...cookieArgs(), ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
@@ -72,9 +72,27 @@ function ydl(args, timeout = 180000) {
       clearTimeout(timer);
       if (code === 0) return resolve(out);
       const line = err.split('\n').map(x => x.trim()).filter(Boolean).pop() || `exit ${code}`;
-      reject(new Error(line.replace(/^ERROR:\s*(\[[^\]]+\]\s*)?/i, '').slice(0, 120)));
+      reject(new Error(line.replace(/^ERROR:\s*(\[[^\]]+\]\s*)?/i, '').slice(0, 160)));
     });
   }));
+}
+const BOT_CHECK = /sign in to confirm|not a bot|cookies-from-browser|confirm you.re not/i;
+const YT_CLIENTS = ['android_vr', 'tv', 'mweb', 'ios', 'web_safari'];
+async function ydl(args, timeout = 180000) {
+  const isYt = args.some(a => /^https?:\/\/(www\.|m\.|music\.)?(youtube\.com|youtu\.be)/i.test(a));
+  try { return await ydlOnce(args, timeout); }
+  catch (e) {
+    if (!isYt || !BOT_CHECK.test(e.message)) throw e;
+    let last = e;
+    for (const c of YT_CLIENTS) {
+      try { return await ydlOnce(['--extractor-args', `youtube:player_client=${c}`, ...args], timeout); }
+      catch (e2) { last = e2; if (!BOT_CHECK.test(e2.message) && !/format|available|player response|unavailable/i.test(e2.message)) break; }
+    }
+    const err = new Error('YouTube blocked this server (bot check)');
+    err.botCheck = true;
+    err.detail = last.message;
+    throw err;
+  }
 }
 
 function ffrun(args, timeout = 240000) {
@@ -86,6 +104,23 @@ function ffrun(args, timeout = 240000) {
   });
 }
 const probe = (file) => new Promise(resolve => { execFile(ffmpegBin(), ['-hide_banner', '-i', file], (_e, _o, se) => resolve(String(se || ''))); });
+
+let existing = null;
+function existingCommand(name) {
+  if (!existing) { try { existing = require('./downloads'); } catch (_) { existing = []; } }
+  return (Array.isArray(existing) ? existing : []).find(c => c && Array.isArray(c.command) && c.command.includes(name)) || null;
+}
+const isYoutube = (u) => /(^|\/\/)(www\.|m\.|music\.)?(youtube\.com|youtu\.be)/i.test(u || '');
+function siteCommand(u) {
+  if (isYoutube(u)) return 'video';
+  if (/tiktok\.com/i.test(u)) return 'tikdl';
+  if (/instagram\.com/i.test(u)) return 'insta';
+  if (/facebook\.com|fb\.watch/i.test(u)) return 'fbdl';
+  if (/twitter\.com|x\.com/i.test(u)) return 'twitter';
+  if (/pinterest\.|pin\.it/i.test(u)) return 'pindl';
+  return null;
+}
+const friendly = (e) => (e && e.botCheck ? 'YouTube blocked this server. Set YTDLP_COOKIES (a cookies.txt from a logged-in browser) to fix it for good.' : String((e && e.message) || e).slice(0, 170));
 
 let running = 0;
 const waiting = [];
@@ -248,7 +283,7 @@ async function guarded(client, m, ctx, label, job) {
     msg = await client.sendMessage(m.chat, { text: `${label}\n⏳ Working on it...` }, { quoted: m });
     await slot(() => job({ dir, p, upd: (t) => edit(client, m, msg.key, t) }));
   } catch (e) {
-    const text = `❌ ${String((e && e.message) || e).slice(0, 170)}\n${TAG}`;
+    const text = `❌ ${friendly(e)}\n${TAG}`;
     if (msg) await edit(client, m, msg.key, text); else m.reply(text);
   } finally { rmDir(dir); }
 }
@@ -273,7 +308,16 @@ const commands = [
         let file;
         try { file = await downloadVideo(t.url, dir, height); }
         catch (e) {
-          try { file = await fallbackDownload(t.url, dir); } catch (_) { throw e; }
+          try { file = await fallbackDownload(t.url, dir); }
+          catch (_) {
+            const alt = existingCommand(siteCommand(t.url));
+            if (alt) {
+              await upd(`🎬 *${t.title || t.url}*\n⏳ Trying the bot's other download sources...`);
+              await alt.handler(client, m, { ...ctx, text: t.url });
+              return;
+            }
+            throw e;
+          }
         }
         file = await normalizeMp4(file);
         const buf = fs.readFileSync(file);

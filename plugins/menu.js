@@ -209,50 +209,43 @@ module.exports = [
         stalk: '☸️',
         others: '☣️',
         misc: '📦',
-      };
-      const categorySymbols = {
-        downloads: '✦',
-        media:     '◇',
-        converter: '◈',
-        owner:     '✥',
-        football:  '❅',
-        ai:        '✫',
-        group:     '✧',
-        coding:    '◎',
-        utility:   '○',
-        effects:   '✪',
-        stalk:     '☆',
-        others:    '✬',
-        misc:      '✠',
+        movie: '🎬',
+        fun: '🎮',
+        random: '🎲',
+        tools: '🛠️',
+        logo: '🎨',
+        mystic: '🌘',
+        hosting: '🚀',
+        menu: '📜',
+        search: '🔎',
+        music: '🎵',
+        games: '🕹️',
       };
 
-      const line = '━━━━━━━━━━━━━━━━━━━━';
-      let menu = `╭${line}╮\n`;
-      menu += `┃  ✨ ${toBold('BLACK-MD')} ${toBold('BOT')} ✨\n`;
-      menu += `┃  ${toBoldItalic('Next-gen WhatsApp assistant')}\n`;
-      menu += `╰${line}╯\n\n`;
+      const top = '╭──';
+      const bottom = '╰───────────────────•─•';
+      let menu = `${top}〖 ✨ ${toBold('BLACK-MD')} ${toBold('BOT')} ✨ 〗\n`;
+      menu += `│❒•• ${toBoldItalic('Next-gen WhatsApp assistant')}\n`;
+      menu += `${bottom}\n\n`;
 
-      menu += `┏━━『 🛰 ${toBold('SYSTEM')} 』\n`;
-      menu += `┃ 👤 ${toBold('User')}  ⟫  ${pushname}\n`;
-      menu += `┃ 🪩 ${toBold('Mode')}  ⟫  ${mode.toUpperCase()}\n`;
-      menu += `┃ ⚡ ${toBold('Speed')}  ⟫  ${Rspeed.toFixed(4)} ms\n`;
-      menu += `┃ 🔑 ${toBold('Prefix')}  ⟫  [ ${prefix} ]\n`;
-      menu += `┃ 📦 ${toBold('Commands')}  ⟫  ${totalCommands}\n`;
-      menu += `┗━━━━━━━━━━━━━━━━◈\n\n`;
+      menu += `${top}〖 🛰 ${toBold('SYSTEM MENU')} 〗\n`;
+      menu += `│❒•• ${toBold('User')}  ⟫  ${pushname}\n`;
+      menu += `│❒•• ${toBold('Mode')}  ⟫  ${mode.toUpperCase()}\n`;
+      menu += `│❒•• ${toBold('Speed')}  ⟫  ${Rspeed.toFixed(4)} ms\n`;
+      menu += `│❒•• ${toBold('Prefix')}  ⟫  [ ${prefix} ]\n`;
+      menu += `│❒•• ${toBold('Commands')}  ⟫  ${totalCommands}\n`;
+      menu += `${bottom}\n\n`;
 
       for (const [cat, plugins] of Object.entries(byCategory)) {
         const icon = categoryIcons[cat] || '📌';
-        const symbol = categorySymbols[cat] || '✠';
         const names = plugins.map(p => p.commands[0]).filter(Boolean);
-        menu += `╭─❮ ${icon} ${toBoldItalic(cat.toUpperCase())} ❯─⟦ ${names.length} ⟧\n`;
+        menu += `${top}〖 ${icon} ${toBold(cat.toUpperCase() + ' MENU')} 〗\n`;
         for (const n of names) {
-          menu += `│ ${symbol} ${formatCmd(n)}\n`;
+          menu += `│❒•• ${formatCmd(n)}\n`;
         }
-        menu += `╰─────────────────◈\n\n`;
+        menu += `${bottom}\n\n`;
       }
-      menu += `${line}\n`;
-      menu += `𝗠𝗮𝗱𝗲 𝗼𝗻 𝗲𝗮𝗿𝘁𝗵 𝗯𝘆 𝗛𝘂𝗺𝗮𝗻𝘀🔥!\n`;
-      menu += `${line}`;
+      menu += `𝗠𝗮𝗱𝗲 𝗼𝗻 𝗲𝗮𝗿𝘁𝗵 𝗯𝘆 𝗛𝘂𝗺𝗮𝗻𝘀🔥!`;
 
       const shortCaption =
         `✨ ${toBold('BLACK-MD')} ${toBold('BOT')} ✨\n\n` +

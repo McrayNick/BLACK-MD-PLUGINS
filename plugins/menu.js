@@ -277,30 +277,32 @@ function buildBoxed(byCategory, totalCommands, { pushname, mode, Rspeed, prefix 
 
 function buildPanel(byCategory, totalCommands, { pushname, mode, Rspeed, prefix }) {
   const m = String(mode || 'public').toLowerCase();
+  // WhatsApp block quote ("> ") gives the grey, dimmed text with a left bar
+  const q = (line) => `> ${line}\n`;
   let t = `┌───────〔 \`BLACK-MD\` 〕───────┐\n`;
-  t += `│ ┌──────( ${serifBold('MENU')} )──────\n`;
-  t += `│ │ ${toBold('Prefix')}: [ ${prefix} ]\n`;
-  t += `│ │ ${toBold('Mode')}: ${m === 'public' ? '🌐' : '🔒'} ${m.charAt(0).toUpperCase() + m.slice(1)}\n`;
-  t += `│ │ ${toBold('Platform')}: ${serifBold('Black Merchant')} ©\n`;
-  t += `│ │ ${toBold('Menustyle')}: 2\n`;
-  t += `│ │ ${toBold('Latency')}: ${Math.round(Rspeed)} ms\n`;
-  t += `│ │ ${toBold('Uptime')}: ${runtime(process.uptime())}\n`;
-  t += `│ │ ${toBold('Version')}: ${botVersion()}\n`;
-  t += `│ │ ${toBold('Commands')}: ${totalCommands}\n`;
-  t += `│ │ ${toBold('Owner')}: ${serifBold(ownerName('Blackmerchant'))}\n`;
-  t += `│ └──\n│\n`;
+  t += q(`┌──────( ${serifBold('MENU')} )──────`);
+  t += q(`│ ${toBold('Prefix')}: [ ${prefix} ]`);
+  t += q(`│ ${toBold('Mode')}: ${m === 'public' ? '🌐' : '🔒'} ${m.charAt(0).toUpperCase() + m.slice(1)}`);
+  t += q(`│ ${toBold('Platform')}: ${serifBold('Black Merchant')} ©`);
+  t += q(`│ ${toBold('Menustyle')}: 2`);
+  t += q(`│ ${toBold('Latency')}: ${Math.round(Rspeed)} ms`);
+  t += q(`│ ${toBold('Uptime')}: ${runtime(process.uptime())}`);
+  t += q(`│ ${toBold('Version')}: ${botVersion()}`);
+  t += q(`│ ${toBold('Commands')}: ${totalCommands}`);
+  t += q(`│ ${toBold('Owner')}: ${serifBold(ownerName('Blackmerchant'))}`);
+  t += q(`└──`);
+  t += `└──────────❬ ◈ ❭──────────\n`;
   t += READMORE + '\n';
   for (const [cat, plugins] of Object.entries(byCategory)) {
     const names = plugins.map(p => p.commands[0]).filter(Boolean);
-    t += `│ ┌──────( ${PANEL_ICONS[cat] || '📌'} ${serifBold(cat.toUpperCase())} )──────\n`;
-    for (const n of names) t += `│ │ ◈ ${formatCmd(n)}\n`;
-    t += `│ └──────────❬ ${names.length} ❭──────────\n│\n`;
+    t += q(`┌──────( ${PANEL_ICONS[cat] || '📌'} ${serifBold(cat.toUpperCase())} )──────`);
+    for (const n of names) t += q(`│ ◈ ${formatCmd(n)}`);
+    t += q(`└──────────❬ ${names.length} ❭──────────`);
+    t += '\n';
   }
-  t += `└──────────❬ ◈ ❭──────────\n\n`;
   t += `${serifBold('Made on earth by Humans')} 🔥`;
   return t;
 }
-
 
 const NEWSLETTER_JID = process.env.CHANNEL_JID || '';
 const NEWSLETTER_NAME = process.env.CHANNEL_NAME || 'BLACK-MD';

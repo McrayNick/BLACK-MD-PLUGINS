@@ -169,6 +169,8 @@ async function getMenuMedia(type) {
   return null;
 }
 
+function sig4(n) { const v = Number(n); return Number.isFinite(v) ? String(Number(v.toPrecision(4))) : String(n); }
+
 function buildClassic(byCategory, totalCommands, { pushname, mode, Rspeed, prefix }) {
       const categoryIcons = {
         group: '👥',
@@ -210,7 +212,7 @@ function buildClassic(byCategory, totalCommands, { pushname, mode, Rspeed, prefi
       menu += `┏━━『 🛰 ${toBold('SYSTEM')} 』\n`;
       menu += `┃ 👤 ${toBold('User')}  ⟫  ${pushname}\n`;
       menu += `┃ 🪩 ${toBold('Mode')}  ⟫  ${mode.toUpperCase()}\n`;
-      menu += `┃ ⚡ ${toBold('Speed')}  ⟫  ${Rspeed.toFixed(4)} ms\n`;
+      menu += `┃ ⚡ ${toBold('Speed')}  ⟫  ${sig4(Rspeed)} ms\n`;
       menu += `┃ 🔑 ${toBold('Prefix')}  ⟫  [ ${prefix} ]\n`;
       menu += `┃ 📦 ${toBold('Commands')}  ⟫  ${totalCommands}\n`;
       menu += `┗━━━━━━━━━━━━━━━━◈\n\n`;
@@ -260,7 +262,7 @@ function buildBoxed(byCategory, totalCommands, { pushname, mode, Rspeed, prefix 
   t += `╭──〖 🛰 ${toBold('SYSTEM MENU')} 〗\n`;
   t += `│❒•• ${toBold('User')}  ⟫  ${pushname}\n`;
   t += `│❒•• ${toBold('Mode')}  ⟫  ${String(mode).toUpperCase()}\n`;
-  t += `│❒•• ${toBold('Speed')}  ⟫  ${Rspeed} ms\n`;
+  t += `│❒•• ${toBold('Speed')}  ⟫  ${sig4(Rspeed)} ms\n`;
   t += `│❒•• ${toBold('Prefix')}  ⟫  [ ${prefix} ]\n`;
   t += `│❒•• ${toBold('Commands')}  ⟫  ${totalCommands}\n${bar}\n\n`;
   for (const [cat, plugins] of Object.entries(byCategory)) {
@@ -275,7 +277,7 @@ function buildBoxed(byCategory, totalCommands, { pushname, mode, Rspeed, prefix 
 
 function buildPanel(byCategory, totalCommands, { pushname, mode, Rspeed, prefix }) {
   const m = String(mode || 'public').toLowerCase();
-  let t = '```\n' + `┌───────〔 ${serifBold('BLACK-MD')} 〕───────┐\n`;
+  let t = `┌───────〔 \`BLACK-MD\` 〕───────┐\n`;
   t += `│ ┌──────( ${serifBold('MENU')} )──────\n`;
   t += `│ │ ${toBold('Prefix')}: [ ${prefix} ]\n`;
   t += `│ │ ${toBold('Mode')}: ${m === 'public' ? '🌐' : '🔒'} ${m.charAt(0).toUpperCase() + m.slice(1)}\n`;
@@ -286,16 +288,15 @@ function buildPanel(byCategory, totalCommands, { pushname, mode, Rspeed, prefix 
   t += `│ │ ${toBold('Version')}: ${botVersion()}\n`;
   t += `│ │ ${toBold('Commands')}: ${totalCommands}\n`;
   t += `│ │ ${toBold('Owner')}: ${serifBold(ownerName('Blackmerchant'))}\n`;
-  t += `│ └──────────❬ ◈ ❭──────────\n│\n`;
-  t += '```' + READMORE + '\n```\n';
+  t += `│ └──\n│\n`;
+  t += READMORE + '\n';
   for (const [cat, plugins] of Object.entries(byCategory)) {
     const names = plugins.map(p => p.commands[0]).filter(Boolean);
     t += `│ ┌──────( ${PANEL_ICONS[cat] || '📌'} ${serifBold(cat.toUpperCase())} )──────\n`;
     for (const n of names) t += `│ │ ◈ ${formatCmd(n)}\n`;
     t += `│ └──────────❬ ${names.length} ❭──────────\n│\n`;
   }
-  t += `└──────────────────────────────┘\n`;
-  t += '```\n\n';
+  t += `└──────────❬ ◈ ❭──────────\n\n`;
   t += `${serifBold('Made on earth by Humans')} 🔥`;
   return t;
 }
@@ -339,7 +340,7 @@ async function sendMenu(client, m, ctx, style) {
   const sendText = () => client.sendMessage(m.chat, { text: menu }, { quoted: m });
 
   try {
-    if (style === 'panel' || menutype === 'link') {
+    if (menutype === 'link') {
       const contextInfo = {
         externalAdReply: {
           showAdAttribution: true,
@@ -357,8 +358,9 @@ async function sendMenu(client, m, ctx, style) {
         contextInfo.forwardedNewsletterMessageInfo = { newsletterJid: NEWSLETTER_JID, newsletterName: NEWSLETTER_NAME, serverMessageId: -1 };
       }
       await client.sendMessage(m.chat, { text: menu, contextInfo }, { quoted: m });
-    } else if (menutype === 'video' || menutype === 'image') {
-      const isVideo = menutype === 'video';
+    } else if (style === 'panel' || menutype === 'video' || menutype === 'image') {
+      const isVideo = style !== 'panel' && menutype === 'video';
+      const mediaKind = isVideo ? 'video' : 'image';
       const makeContent = (buffer, caption) => isVideo
         ? { video: buffer, mimetype: 'video/mp4', caption, gifPlayback: true }
         : { image: buffer, caption };
@@ -366,7 +368,7 @@ async function sendMenu(client, m, ctx, style) {
       let sent = false;
       let buffer = null;
       try {
-        buffer = await withTimeout(getMenuMedia(menutype), 60000, 'menu media');
+        buffer = await withTimeout(getMenuMedia(mediaKind), 60000, 'menu media');
       } catch (e) {
         console.error(`[menu] could not prepare ${menutype}: ${e.message}`);
       }

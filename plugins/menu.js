@@ -279,7 +279,7 @@ function buildPanel(byCategory, totalCommands, { pushname, mode, Rspeed, prefix 
   const m = String(mode || 'public').toLowerCase();
   // WhatsApp block quote ("> ") gives the grey, dimmed text with a left bar
   const q = (line) => `> ${line}\n`;
-  let t = `┌───────〔 \`BLACK-MD\` 〕───────┐\n`;
+  let t = `┏━━━━━━━〔 \`BLACK-MD\` 〕━━━━━━━┓\n`;
   t += q(`┌──────( ${serifBold('MENU')} )──────`);
   t += q(`│ ${toBold('Prefix')}: [ ${prefix} ]`);
   t += q(`│ ${toBold('Mode')}: ${m === 'public' ? '🌐' : '🔒'} ${m.charAt(0).toUpperCase() + m.slice(1)}`);
@@ -291,7 +291,7 @@ function buildPanel(byCategory, totalCommands, { pushname, mode, Rspeed, prefix 
   t += q(`│ ${toBold('Commands')}: ${totalCommands}`);
   t += q(`│ ${toBold('Owner')}: ${serifBold(ownerName('Blackmerchant'))}`);
   t += q(`└──`);
-  t += `└──────────❬ ◈ ❭──────────\n`;
+  t += `┗━━━━━━━━━━❬ ◈ ❭━━━━━━━━━━┛\n`;
   t += READMORE + '\n';
   for (const [cat, plugins] of Object.entries(byCategory)) {
     const names = plugins.map(p => p.commands[0]).filter(Boolean);

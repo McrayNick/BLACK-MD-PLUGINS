@@ -169,9 +169,32 @@ async function getMenuMedia(type) {
   return null;
 }
 
-function sig4(n) { const v = Number(n); return Number.isFinite(v) ? String(Number(v.toPrecision(4))) : String(n); }
+module.exports = [
 
-function buildClassic(byCategory, totalCommands, { pushname, mode, Rspeed, prefix }) {
+  {
+    command: ['menu', 'help'],
+    description: 'Show command list',
+    category: 'menu',
+    handler: async (client, m, { prefix, mode, menutype, pushname, Rspeed }) => {
+
+      const byCategory = {};
+      const pluginsDir = path.join(__dirname);
+      const files = fs.readdirSync(pluginsDir).filter(f => f.endsWith('.js') && f !== 'menu.js');
+      for (const file of files) {
+        try {
+          const list = require(path.join(pluginsDir, file));
+          const arr = Array.isArray(list) ? list : [list];
+          for (const plugin of arr) {
+            const cat = plugin.category || 'misc';
+            if (!byCategory[cat]) byCategory[cat] = [];
+            const cmds = Array.isArray(plugin.command) ? plugin.command : [plugin.command];
+            byCategory[cat].push({ commands: cmds, description: plugin.description });
+          }
+        } catch {}
+      }
+
+      const totalCommands = Object.values(byCategory).reduce((sum, arr) => sum + arr.length, 0);
+
       const categoryIcons = {
         group: '👥',
         media: '🎆',
@@ -212,7 +235,7 @@ function buildClassic(byCategory, totalCommands, { pushname, mode, Rspeed, prefi
       menu += `┏━━『 🛰 ${toBold('SYSTEM')} 』\n`;
       menu += `┃ 👤 ${toBold('User')}  ⟫  ${pushname}\n`;
       menu += `┃ 🪩 ${toBold('Mode')}  ⟫  ${mode.toUpperCase()}\n`;
-      menu += `┃ ⚡ ${toBold('Speed')}  ⟫  ${sig4(Rspeed)} ms\n`;
+      menu += `┃ ⚡ ${toBold('Speed')}  ⟫  ${Rspeed.toFixed(4)} ms\n`;
       menu += `┃ 🔑 ${toBold('Prefix')}  ⟫  [ ${prefix} ]\n`;
       menu += `┃ 📦 ${toBold('Commands')}  ⟫  ${totalCommands}\n`;
       menu += `┗━━━━━━━━━━━━━━━━◈\n\n`;
@@ -231,189 +254,75 @@ function buildClassic(byCategory, totalCommands, { pushname, mode, Rspeed, prefi
       menu += `𝗠𝗮𝗱𝗲 𝗼𝗻 𝗲𝗮𝗿𝘁𝗵 𝗯𝘆 𝗛𝘂𝗺𝗮𝗻𝘀🔥!\n`;
       menu += `${line}`;
 
-      return menu;
-}
+      const shortCaption =
+        `✨ ${toBold('BLACK-MD')} ${toBold('BOT')} ✨\n\n` +
+        `👤 ${toBold('User')}  ⟫  ${pushname}\n` +
+        `🪩 ${toBold('Mode')}  ⟫  ${mode.toUpperCase()}\n` +
+        `🔑 ${toBold('Prefix')}  ⟫  [ ${prefix} ]\n` +
+        `📦 ${toBold('Commands')}  ⟫  ${totalCommands}`;
 
-const READMORE = String.fromCharCode(8206).repeat(4001);
-const PANEL_ICONS = { group: '👥', media: '🎆', ai: '🤖', downloads: '📥', converter: '🔃', coding: '🎭', utility: '🔧', owner: '👑', effects: '❄️', football: '⚽️', stalk: '☸️', others: '☣️', misc: '📦', movie: '🎬', fun: '🎮', random: '🎲', tools: '🛠️', logo: '🎨', mystic: '🌘', hosting: '🚀', menu: '📜', search: '🔎', music: '🎵', games: '🕹️' };
-function serifBold(str) {
-  return String(str).split('').map(c => {
-    const k = c.charCodeAt(0);
-    if (k >= 65 && k <= 90) return String.fromCodePoint(0x1D400 + k - 65);
-    if (k >= 97 && k <= 122) return String.fromCodePoint(0x1D41A + k - 97);
-    if (k >= 48 && k <= 57) return String.fromCodePoint(0x1D7CE + k - 48);
-    return c;
-  }).join('');
-}
-function botVersion() {
-  try { return 'v' + require('../package.json').version; } catch (_) { return 'v1.0.0'; }
-}
-function ownerName(fallback) {
-  try {
-    const set = require('../set');
-    for (const k of ['ownername', 'ownerName', 'OWNER_NAME', 'owner_name']) if (set[k]) return String(set[k]);
-  } catch (_) {}
-  return fallback;
-}
-function buildBoxed(byCategory, totalCommands, { pushname, mode, Rspeed, prefix }) {
-  const bar = '╰───────────────────•─•';
-  let t = `╭──〖 ✨ ${toBold('BLACK-MD')} ${toBold('BOT')} ✨ 〗\n`;
-  t += `│❒•• ${toBoldItalic('Next-gen WhatsApp assistant')}\n${bar}\n\n`;
-  t += `╭──〖 🛰 ${toBold('SYSTEM MENU')} 〗\n`;
-  t += `│❒•• ${toBold('User')}  ⟫  ${pushname}\n`;
-  t += `│❒•• ${toBold('Mode')}  ⟫  ${String(mode).toUpperCase()}\n`;
-  t += `│❒•• ${toBold('Speed')}  ⟫  ${sig4(Rspeed)} ms\n`;
-  t += `│❒•• ${toBold('Prefix')}  ⟫  [ ${prefix} ]\n`;
-  t += `│❒•• ${toBold('Commands')}  ⟫  ${totalCommands}\n${bar}\n\n`;
-  for (const [cat, plugins] of Object.entries(byCategory)) {
-    const names = plugins.map(p => p.commands[0]).filter(Boolean);
-    t += `╭──〖 ${PANEL_ICONS[cat] || '📌'} ${toBold(cat.toUpperCase() + ' MENU')} 〗\n`;
-    for (const n of names) t += `│❒•• ${formatCmd(n)}\n`;
-    t += `${bar}\n\n`;
-  }
-  t += `${toBold('Made on earth by Humans')}🔥!`;
-  return t;
-}
+      const sendText = () => client.sendMessage(m.chat, { text: menu }, { quoted: m });
 
-function buildPanel(byCategory, totalCommands, { pushname, mode, Rspeed, prefix }) {
-  const m = String(mode || 'public').toLowerCase();
-  // WhatsApp block quote ("> ") gives the grey, dimmed text with a left bar
-  const q = (line) => `> ${line}\n`;
-  let t = `┏━━━━━━━〔 \`BLACK-MD\` 〕━━━━━━━┓\n`;
-  t += q(`┌──────( ${serifBold('MENU')} )──────`);
-  t += q(`│ ${toBold('Prefix')}: [ ${prefix} ]`);
-  t += q(`│ ${toBold('Mode')}: ${m === 'public' ? '🌐' : '🔒'} ${m.charAt(0).toUpperCase() + m.slice(1)}`);
-  t += q(`│ ${toBold('Platform')}: ${serifBold('Black Merchant')} ©`);
-  t += q(`│ ${toBold('Menustyle')}: 2`);
-  t += q(`│ ${toBold('Latency')}: ${Math.round(Rspeed)} ms`);
-  t += q(`│ ${toBold('Uptime')}: ${runtime(process.uptime())}`);
-  t += q(`│ ${toBold('Version')}: ${botVersion()}`);
-  t += q(`│ ${toBold('Commands')}: ${totalCommands}`);
-  t += q(`│ ${toBold('Owner')}: ${serifBold(ownerName('Blackmerchant'))}`);
-  t += q(`└──`);
-  t += `┗━━━━━━━━━━❬ ◈ ❭━━━━━━━━━━┛\n`;
-  t += READMORE + '\n';
-  for (const [cat, plugins] of Object.entries(byCategory)) {
-    const names = plugins.map(p => p.commands[0]).filter(Boolean);
-    t += q(`┌──────( ${PANEL_ICONS[cat] || '📌'} ${serifBold(cat.toUpperCase())} )──────`);
-    for (const n of names) t += q(`│ ◈ ${formatCmd(n)}`);
-    t += q(`└──────────❬ ${names.length} ❭──────────`);
-    t += '\n';
-  }
-  t += `${serifBold('Made on earth by Humans')} 🔥`;
-  return t;
-}
-
-const NEWSLETTER_JID = process.env.CHANNEL_JID || '';
-const NEWSLETTER_NAME = process.env.CHANNEL_NAME || 'BLACK-MD';
-
-function collect() {
-  const byCategory = {};
-  const files = fs.readdirSync(__dirname).filter(f => f.endsWith('.js') && f !== 'menu.js' && !/backup|\.old\./i.test(f));
-  for (const file of files) {
-    try {
-      const list = require(path.join(__dirname, file));
-      const arr = Array.isArray(list) ? list : [list];
-      for (const plugin of arr) {
-        const cat = plugin.category || 'misc';
-        if (!byCategory[cat]) byCategory[cat] = [];
-        const cmds = Array.isArray(plugin.command) ? plugin.command : [plugin.command];
-        byCategory[cat].push({ commands: cmds, description: plugin.description });
-      }
-    } catch {}
-  }
-  return byCategory;
-}
-
-async function sendMenu(client, m, ctx, style) {
-  const { prefix, mode, menutype, pushname, Rspeed } = ctx;
-  const byCategory = collect();
-  const totalCommands = Object.values(byCategory).reduce((sum, arr) => sum + arr.length, 0);
-  const info = { pushname, mode, Rspeed, prefix };
-  const menu = style === 'panel' ? buildPanel(byCategory, totalCommands, info) : style === 'boxed' ? buildBoxed(byCategory, totalCommands, info) : buildClassic(byCategory, totalCommands, info);
-
-  const shortCaption =
-    `✨ ${toBold('BLACK-MD')} ${toBold('BOT')} ✨\n\n` +
-    `👤 ${toBold('User')}  ⟫  ${pushname}\n` +
-    `🪩 ${toBold('Mode')}  ⟫  ${String(mode).toUpperCase()}\n` +
-    `🔑 ${toBold('Prefix')}  ⟫  [ ${prefix} ]\n` +
-    `📦 ${toBold('Commands')}  ⟫  ${totalCommands}`;
-
-  const sendText = () => client.sendMessage(m.chat, { text: menu }, { quoted: m });
-
-  try {
-    if (menutype === 'link') {
-      const contextInfo = {
-        externalAdReply: {
-          showAdAttribution: true,
-          title: `𝐁𝐋𝐀𝐂𝐊-𝐌𝐃`,
-          body: `${runtime(process.uptime())}`,
-          thumbnailUrl: MENU_THUMB,
-          sourceUrl: 'https://wa.me/254114283550?text=Hello👋+blackmerchant+Nihostie+Bot+Mkuu+😔',
-          mediaType: 1,
-          renderLargerThumbnail: true
-        }
-      };
-      if (style === 'panel' && NEWSLETTER_JID) {
-        contextInfo.forwardingScore = 1;
-        contextInfo.isForwarded = true;
-        contextInfo.forwardedNewsletterMessageInfo = { newsletterJid: NEWSLETTER_JID, newsletterName: NEWSLETTER_NAME, serverMessageId: -1 };
-      }
-      await client.sendMessage(m.chat, { text: menu, contextInfo }, { quoted: m });
-    } else if (style === 'panel' || menutype === 'video' || menutype === 'image') {
-      const isVideo = style !== 'panel' && menutype === 'video';
-      const mediaKind = isVideo ? 'video' : 'image';
-      const makeContent = (buffer, caption) => isVideo
-        ? { video: buffer, mimetype: 'video/mp4', caption, gifPlayback: true }
-        : { image: buffer, caption };
-
-      let sent = false;
-      let buffer = null;
       try {
-        buffer = await withTimeout(getMenuMedia(mediaKind), 60000, 'menu media');
-      } catch (e) {
-        console.error(`[menu] could not prepare ${menutype}: ${e.message}`);
-      }
+        if (menutype === 'video' || menutype === 'image') {
+          const isVideo = menutype === 'video';
+          const makeContent = (buffer, caption) => isVideo
+            ? { video: buffer, mimetype: 'video/mp4', caption, gifPlayback: true }
+            : { image: buffer, caption };
 
-      if (buffer) {
-        try {
-          await withTimeout(client.sendMessage(m.chat, makeContent(buffer, menu), { quoted: m }), 60000, `${menutype} send`);
-          sent = true;
-        } catch (e) {
-          console.error(`[menu] ${menutype} send failed: ${e.message}`);
+          let sent = false;
+          let buffer = null;
           try {
-            await withTimeout(client.sendMessage(m.chat, makeContent(buffer, shortCaption), { quoted: m }), 60000, `${menutype} short send`);
-            await sendText();
-            sent = true;
-          } catch (e2) {
-            console.error(`[menu] ${menutype} short send failed: ${e2.message}`);
+            buffer = await withTimeout(getMenuMedia(menutype), 60000, 'menu media');
+          } catch (e) {
+            console.error(`[menu] could not prepare ${menutype}: ${e.message}`);
           }
+
+          if (buffer) {
+            try {
+              // Single message: media + full menu as caption
+              await withTimeout(client.sendMessage(m.chat, makeContent(buffer, menu), { quoted: m }), 60000, `${menutype} send`);
+              sent = true;
+            } catch (e) {
+              console.error(`[menu] ${menutype} send failed: ${e.message}`);
+              try {
+                // Caption may have been rejected: media with short caption + full menu as text
+                await withTimeout(client.sendMessage(m.chat, makeContent(buffer, shortCaption), { quoted: m }), 60000, `${menutype} short send`);
+                await sendText();
+                sent = true;
+              } catch (e2) {
+                console.error(`[menu] ${menutype} short send failed: ${e2.message}`);
+              }
+            }
+          }
+
+          // Never leave the user without a menu
+          if (!sent) await sendText();
+
+        } else if (menutype === 'link') {
+          await client.sendMessage(m.chat, {
+            text: menu,
+            contextInfo: {
+              externalAdReply: {
+                showAdAttribution: true,
+                title: `𝐁𝐋𝐀𝐂𝐊-𝐌𝐃`,
+                body: `${runtime(process.uptime())}`,
+                thumbnailUrl: MENU_THUMB,
+                sourceUrl: 'https://wa.me/254114283550?text=Hello👋+blackmerchant+Nihostie+Bot+Mkuu+😔',
+                mediaType: 1,
+                renderLargerThumbnail: true
+              }
+            }
+          }, { quoted: m });
+
+        } else {
+          await sendText();
         }
+      } catch (err) {
+        console.error('[menu] send failed:', err);
+        try { await sendText(); } catch (e) { console.error('[menu] text fallback failed:', e); }
       }
-      if (!sent) await sendText();
-    } else {
-      await sendText();
     }
-  } catch (err) {
-    console.error('[menu] send failed:', err);
-    try { await sendText(); } catch (e) { console.error('[menu] text fallback failed:', e); }
-  }
-}
-
-module.exports = [
-
-  {
-    command: ['menu', 'help'],
-    description: 'Show command list',
-    category: 'menu',
-    handler: async (client, m, ctx) => sendMenu(client, m, ctx, 'boxed')
-  },
-
-  {
-    command: ['menu2'],
-    description: 'Show command list (panel style with link card)',
-    category: 'menu',
-    handler: async (client, m, ctx) => sendMenu(client, m, ctx, 'panel')
   },
 
   {

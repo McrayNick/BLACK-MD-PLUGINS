@@ -13,20 +13,74 @@ const PROXY_URL = (process.env.AI_PROXY_URL || 'https://api-4lqo.onrender.com').
 const CHAT_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 const VISION_MODEL = process.env.GROQ_VISION_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct';
 
-async function askProxy(client, messages, model) {
-  try {
-    const botId = String((client.user && client.user.id) || '').split(':')[0].split('@')[0];
-    const res = await axios.post(
-      `${PROXY_URL}/openai/v1/chat/completions`,
-      { model, messages, temperature: 0.7, max_completion_tokens: 1500 },
-      { headers: { 'x-bot-id': botId }, timeout: 60000, validateStatus: () => true }
-    );
-    const content = res.data && res.data.choices && res.data.choices[0] && res.data.choices[0].message && res.data.choices[0].message.content;
-    return content ? content.replace(/<think>[\s\S]*?<\/think>/g, '').trim() : null;
-  } catch {
-    return null;
-  }
+const PREFERRED = [
+  'llama-3.3-70b-versatile',
+  'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
+  'llama-3.1-8b-instant',
+  'qwen/qwen3-32b',
+  'moonshotai/kimi-k2-instruct-0905',
+];
+const NOT_CHAT = /whisper|orpheus|guard|safeguard|compound|tts|embed/i;
+const VISION_HINT = /llama-4|vision|vl\b|scout|maverick|qwen3\.[5-9]/i;
+const replacements = new Map();
+let availableModels = null;
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const modelMissing = (res) => {
+  const error = res.data && res.data.error;
+  return res.status === 404 || Boolean(error && /model_not_found|does not exist|do not have access/i.test(`${error.code} ${error.message}`));
+};
+
+async function listModels(botId) {
+  if (availableModels) return availableModels;
+  const res = await axios.get(`${PROXY_URL}/openai/v1/models`, { headers: { 'x-bot-id': botId }, timeout: 30000, validateStatus: () => true });
+  const ids = res.status === 200 && res.data && Array.isArray(res.data.data) ? res.data.data.map((item) => item.id) : [];
+  if (ids.length) availableModels = ids;
+  return ids;
 }
+
+async function pickModel(botId, failed, vision) {
+  const usable = (await listModels(botId)).filter((id) => id !== failed && !NOT_CHAT.test(id));
+  if (vision) return usable.find((id) => VISION_HINT.test(id)) || null;
+  return PREFERRED.find((id) => usable.includes(id)) || usable[0] || null;
+}
+
+async function askProxy(client, messages, wanted) {
+  const botId = String((client.user && client.user.id) || '').split(':')[0].split('@')[0];
+  const vision = Array.isArray(messages[messages.length - 1].content);
+  let model = replacements.get(wanted) || wanted;
+  let swapped = false;
+  const deadline = Date.now() + 55000;
+  while (Date.now() < deadline) {
+    try {
+      const res = await axios.post(
+        `${PROXY_URL}/openai/v1/chat/completions`,
+        { model, messages, temperature: 0.7, max_completion_tokens: 1500 },
+        { headers: { 'x-bot-id': botId }, timeout: 50000, validateStatus: () => true }
+      );
+      if (res.status < 500) {
+        if (modelMissing(res) && !swapped) {
+          swapped = true;
+          const next = await pickModel(botId, model, vision);
+          if (next) {
+            model = next;
+            replacements.set(wanted, next);
+            continue;
+          }
+        }
+        const content = res.data && res.data.choices && res.data.choices[0] && res.data.choices[0].message && res.data.choices[0].message.content;
+        return content ? content.replace(/<think>[\s\S]*?<\/think>/g, '').trim() : null;
+      }
+    } catch {
+    }
+    await wait(6000);
+  }
+  return null;
+}
+
+axios.get(`${PROXY_URL}/health`, { timeout: 60000 }).catch(() => { });
 
 const chatMessages = (history, text) => [...history.map((h) => ({ role: h.role, content: h.content })), { role: 'user', content: text }];
 

@@ -9,6 +9,27 @@ const geminiSessions = new Map();
 const llamaSessions = new Map();
 const wormgptSessions = new Map();
 
+const PROXY_URL = (process.env.AI_PROXY_URL || 'https://api-4lqo.onrender.com').replace(/\/+$/, '');
+const CHAT_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const VISION_MODEL = process.env.GROQ_VISION_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct';
+
+async function askProxy(client, messages, model) {
+  try {
+    const botId = String((client.user && client.user.id) || '').split(':')[0].split('@')[0];
+    const res = await axios.post(
+      `${PROXY_URL}/openai/v1/chat/completions`,
+      { model, messages, temperature: 0.7, max_completion_tokens: 1500 },
+      { headers: { 'x-bot-id': botId }, timeout: 60000, validateStatus: () => true }
+    );
+    const content = res.data && res.data.choices && res.data.choices[0] && res.data.choices[0].message && res.data.choices[0].message.content;
+    return content ? content.replace(/<think>[\s\S]*?<\/think>/g, '').trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+const chatMessages = (history, text) => [...history.map((h) => ({ role: h.role, content: h.content })), { role: 'user', content: text }];
+
 
 const MAX_HISTORY = 10;
 function getHistory(store, jid) {
@@ -27,222 +48,185 @@ function buildPrompt(history, text) {
 }
 
 
-const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const TEXT_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
-const PREFERRED = [
-  'llama-3.3-70b-versatile',
-  'openai/gpt-oss-120b',
-  'openai/gpt-oss-20b',
-  'llama-3.1-8b-instant',
-  'qwen/qwen3-32b',
-  'moonshotai/kimi-k2-instruct-0905',
-];
-const NOT_CHAT = /whisper|orpheus|guard|safeguard|compound|tts|embed/i;
-const VISION_HINT = /llama-4|vision|vl\b|scout|maverick|qwen3\.[5-9]/i;
-const SYSTEM = 'You are a helpful, friendly assistant inside a WhatsApp bot. Keep answers clear and reasonably short.';
-let availableModels = null;
-
-function groqKey() {
-  const key = process.env.GROQ_KEY || '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';
-  if (!key) throw new Error('GROQ_KEY is not set');
-  return key.trim();
-}
-
-async function listModels() {
-  if (availableModels) return availableModels;
-  const response = await axios.get(GROQ_URL.replace('/chat/completions', '/models'), {
-    headers: { Authorization: `Bearer ${groqKey()}` },
-    timeout: 30000,
-    validateStatus: () => true,
-  });
-  availableModels = response.status === 200 && response.data && Array.isArray(response.data.data)
-    ? response.data.data.map((item) => item.id)
-    : [];
-  return availableModels;
-}
-
-function postGroq(messages, model) {
-  return axios.post(
-    GROQ_URL,
-    { model, messages, temperature: 0.7, max_completion_tokens: 1500 },
-    {
-      headers: { Authorization: `Bearer ${groqKey()}`, 'Content-Type': 'application/json' },
-      timeout: 60000,
-      validateStatus: () => true,
-    }
-  );
-}
-
-const cleanAnswer = (text) => String(text).replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-
-const answerOf = (response) => {
-  const data = response.data;
-  return data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
-};
-
-const modelMissing = (response) => {
-  const error = response.data && response.data.error;
-  return response.status === 404 || (error && /model_not_found|does not exist|do not have access/i.test(`${error.code} ${error.message}`));
-};
-
-async function groqChat(history, text, model) {
-  const messages = [{ role: 'system', content: SYSTEM }, ...history, { role: 'user', content: text }];
-  let response = await postGroq(messages, model);
-  if (modelMissing(response)) {
-    const usable = (await listModels()).filter((id) => !NOT_CHAT.test(id));
-    const pick = PREFERRED.find((id) => id !== model && usable.includes(id)) || usable.find((id) => id !== model);
-    if (!pick) throw new Error(`Model ${model} is not available to this key`);
-    response = await postGroq(messages, pick);
-  }
-  if (response.status === 401) throw new Error('Groq rejected the API key');
-  if (response.status === 429) throw new Error('Groq rate limit reached, try again in a moment');
-  const answer = answerOf(response);
-  if (response.status < 200 || response.status >= 300 || !answer) {
-    const detail = response.data && response.data.error && response.data.error.message;
-    throw new Error(detail || `Groq returned HTTP ${response.status}`);
-  }
-  return cleanAnswer(answer);
-}
-
-async function geminiCall(parts, history) {
-  const key = process.env.GEMINI_KEY;
-  if (!key) return null;
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-  const contents = [
-    ...(history || []).map((h) => ({ role: h.role === 'assistant' ? 'model' : 'user', parts: [{ text: h.content }] })),
-    { role: 'user', parts },
-  ];
-  const response = await axios.post(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key.trim())}`,
-    { contents },
-    { timeout: 60000, validateStatus: () => true }
-  );
-  const out = response.data && response.data.candidates && response.data.candidates[0] && response.data.candidates[0].content && response.data.candidates[0].content.parts;
-  if (response.status !== 200 || !out) {
-    const detail = response.data && response.data.error && response.data.error.message;
-    throw new Error(`Gemini: ${detail || 'HTTP ' + response.status}`);
-  }
-  return out.map((part) => part.text || '').join('').trim();
-}
-
-async function groqVision(prompt, base64, type) {
-  const content = [
-    { type: 'text', text: prompt },
-    { type: 'image_url', image_url: { url: `data:${type};base64,${base64}` } },
-  ];
-  const ids = await listModels().catch(() => []);
-  const candidates = [...new Set([process.env.GROQ_VISION_MODEL, ...ids.filter((id) => !NOT_CHAT.test(id) && VISION_HINT.test(id))].filter(Boolean))];
-  const failures = [];
-  for (const model of candidates) {
-    try {
-      const response = await postGroq([{ role: 'user', content }], model);
-      const answer = answerOf(response);
-      if (response.status === 200 && answer) return cleanAnswer(answer);
-      const detail = response.data && response.data.error && response.data.error.message;
-      failures.push(`${model}: ${detail || 'HTTP ' + response.status}`);
-    } catch (error) {
-      failures.push(`${model}: ${error.message}`);
-    }
-  }
-  return { failures, tried: candidates.length };
-}
-
-async function describeImage(prompt, base64, type, geminiFirst) {
-  const attempts = [
-    async () => {
-      const answer = await geminiCall([{ text: prompt }, { inline_data: { mime_type: type, data: base64 } }]);
-      return answer ? answer : { failures: [], tried: 0 };
-    },
-    () => groqVision(prompt, base64, type),
-  ];
-  if (!geminiFirst) attempts.reverse();
-  const failures = [];
-  let tried = 0;
-  for (const attempt of attempts) {
-    try {
-      const result = await attempt();
-      if (typeof result === 'string') return result;
-      failures.push(...result.failures);
-      tried += result.tried;
-    } catch (error) {
-      failures.push(error.message);
-    }
-  }
-  throw new Error(tried || process.env.GEMINI_KEY
-    ? `No image model worked. ${failures.join(' | ')}`
-    : 'Your Groq key has no image-capable model. Set GEMINI_KEY (free from aistudio.google.com) to enable image analysis.');
-}
-
-function chatCommand({ command, aliases, description, name, store, model, gemini }) {
-  return {
-    command: [command],
-    aliases,
-    description,
-    category: 'ai',
-    handler: async (client, m, { reply, text }) => {
-      if (!text) return reply(`Ask me something!\n\n💡: Use *.${command} -clear* to reset your conversation history.`);
-      const jid = m.sender || m.chat;
-      if (text.trim() === '-clear') {
-        store.delete(jid);
-        return reply(`🧹 *${name} chat history cleared!* Fresh start.`);
-      }
-      let msg;
-      try {
-        msg = await client.sendMessage(m.chat, { text: '🤖 Thinking...' }, { quoted: m });
-        const history = getHistory(store, jid);
-        let answer = null;
-        if (gemini) answer = await geminiCall([{ text }], history).catch(() => null);
-        if (!answer) answer = await groqChat(history, text, model);
-        pushHistory(store, jid, 'user', text);
-        pushHistory(store, jid, 'assistant', answer);
-        await client.sendMessage(m.chat, { text: `*${answer}*`, edit: msg.key }, { quoted: m });
-      } catch (error) {
-        const failure = `❌ ${error.message || 'Error getting AI response.'}`;
-        if (msg) return client.sendMessage(m.chat, { text: failure, edit: msg.key }, { quoted: m });
-        m.reply(failure);
-      }
-    },
-  };
-}
-
-function visionCommand({ command, aliases, description, geminiFirst, title }) {
-  return {
-    command: [command],
-    aliases,
-    description,
-    category: 'ai',
-    handler: async (client, m, { reply, text }) => {
-      if (!m.quoted) return reply(`📌 Reply to an image with a question.\nExample: *.${command} what is this?*`);
-      if (!text) return reply(`❌ Provide a question about the image!\nExample: *.${command} what is in this image?*`);
-      const mime = m.quoted.mimetype || '';
-      if (!/image/.test(mime)) return reply('❌ Only image messages are supported.');
-      let filePath;
-      try {
-        await client.sendMessage(m.chat, { react: { text: '🤖', key: m.key } });
-        await reply('🔍 Analyzing your image...');
-        filePath = await client.downloadAndSaveMediaMessage(m.quoted);
-        if (!filePath) return reply('❌ Failed to download image.');
-        const base64 = require('fs').readFileSync(filePath).toString('base64');
-        const type = /png/.test(mime) ? 'image/png' : /webp/.test(mime) ? 'image/webp' : 'image/jpeg';
-        const answer = await describeImage(text, base64, type, geminiFirst);
-        await reply(`🤖 *${title}*\n\n${answer}`);
-      } catch (error) {
-        reply(`❌ Failed to analyze image.\n${error.message || ''}`.trim());
-      } finally {
-        if (filePath) require('fs').promises.unlink(filePath).catch(() => { });
-      }
-    },
-  };
-}
-
 module.exports = [
 
-  chatCommand({ command: 'ai', aliases: ['llama'], description: 'Chat with LLaMA AI (remembers conversation)', name: 'AI', store: llamaSessions, model: TEXT_MODEL }),
-  chatCommand({ command: 'gpt', aliases: ['chatgpt'], description: 'Chat with GPT (remembers conversation)', name: 'GPT', store: gptSessions, model: 'openai/gpt-oss-120b' }),
-  chatCommand({ command: 'gemini', aliases: ['ai2'], description: 'AI chat with Gemini (remembers conversation)', name: 'Gemini', store: geminiSessions, model: TEXT_MODEL, gemini: true }),
-  visionCommand({ command: 'vision', aliases: ['imgai', 'analyze', 'llamavision'], description: 'Analyze an image with AI (quote an image)', geminiFirst: false, title: 'Vision Analysis' }),
-  visionCommand({ command: 'vision2', aliases: ['imgai2', 'analyze2', 'geminivision'], description: 'Analyze an image with Gemini Vision (quote an image)', geminiFirst: true, title: 'Gemini Vision' }),
+  // ── .ai / .gemini2 — Gemini via Bk9 (with quoted context) ────────────
+  {
+  command: ['ai'],
+  aliases: ['llama'],
+  description: 'Chat with LLaMA AI (remembers conversation)',
+  category: 'ai',
+  handler: async (client, m, { reply, text }) => {
+    if (!text) return reply('Ask me anything!\n\n💡: Use *.ai -clear* to reset your conversation history.');
+    const jid = m.sender || m.chat;
+    if (text.trim() === '-clear') {
+      llamaSessions.delete(jid);
+      return reply('🧹 *AI chat history cleared!* Fresh start.');
+    }
+    try {
+      let msg = await client.sendMessage(m.chat, { text: `🤖 Thinking...` }, { quoted: m });
+      const history = getHistory(llamaSessions, jid);
+      const prompt = buildPrompt(history, text);
+      let replyText = await askProxy(client, chatMessages(history, text), CHAT_MODEL);
+      if (!replyText) {
+        const res = await fetch(`https://api.bk9.dev/ai/llama?q=${encodeURIComponent(prompt)}`);
+        const data = await res.json();
+        if (!data?.status || !data?.BK9) return client.sendMessage(m.chat, { text: `❌ No response from AI`, edit: msg.key }, { quoted: m });
+        replyText = data.BK9;
+      }
+      pushHistory(llamaSessions, jid, 'user', text);
+      pushHistory(llamaSessions, jid, 'assistant', replyText);
+      await client.sendMessage(m.chat, { text: `*${replyText}*`, edit: msg.key }, { quoted: m });
+    } catch (err) {
+      m.reply('❌ Error connecting to AI. Try again later.');
+    }
+  }
+},
 
+  // ── .gpt / .chatgpt — GPT-4 via ravennsite ────────────────────────────────
+  {
+    command: ['gpt'],
+    aliases: ['chatgpt'],
+    description: 'Chat with GPT-4 (remembers conversation)',
+    category: 'ai',
+    handler: async (client, m, { reply, text, api }) => {
+      if (!text) return reply('This is GPT-4 — ask me something!\n\n💡: Use *.gpt -clear* to reset your conversation history.');
+      const jid = m.sender || m.chat;
+      if (text.trim() === '-clear') {
+        gptSessions.delete(jid);
+        return reply('🧹 *GPT chat history cleared!* Fresh start.');
+      }
+      try {
+        let msg = await client.sendMessage(m.chat, { text: `🤖 Thinking...` }, { quoted: m });
+        const history = getHistory(gptSessions, jid);
+        const prompt = buildPrompt(history, text);
+        let replyText = await askProxy(client, chatMessages(history, text), CHAT_MODEL);
+        if (!replyText) {
+          const res = await axios.get(`${api}/ai/gpt4?q=${encodeURIComponent(prompt)}`);
+          const data = res.data;
+          if (!data?.status || !data?.result) return client.sendMessage(m.chat, { text: `❌ No response from AI`, edit: msg.key }, { quoted: m });
+          replyText = data.result;
+        }
+        pushHistory(gptSessions, jid, 'user', text);
+        pushHistory(gptSessions, jid, 'assistant', replyText);
+        await client.sendMessage(m.chat, { text: `*${replyText}*`, edit: msg.key }, { quoted: m });
+      } catch (err) {
+        m.reply('❌ Error getting AI response.');
+      }
+    }
+  },
+
+  // ── .gemini ───────────────────────────────────────────────────────────────
+  {
+    command: ['gemini'],
+    aliases: ['ai2'],
+    description: 'AI chat with Gemini (remembers conversation)',
+    category: 'ai',
+    handler: async (client, m, { reply, text, api }) => {
+      if (!text) return reply('Ask me something!\n\n💡: Use *.gemini -clear* to reset your conversation history.');
+      const jid = m.sender || m.chat;
+      if (text.trim() === '-clear') {
+        geminiSessions.delete(jid);
+        return reply('🧹 *Gemini chat history cleared!* Fresh start.');
+      }
+      try {
+        let msg = await client.sendMessage(m.chat, { text: `🤖 Thinking...` }, { quoted: m });
+        const history = getHistory(geminiSessions, jid);
+        const prompt = buildPrompt(history, text);
+        let replyText = await askProxy(client, chatMessages(history, text), CHAT_MODEL);
+        if (!replyText) {
+          const res = await axios.get(`${api}/ai/gpt?q=${encodeURIComponent(prompt)}`);
+          const data = res.data;
+          if (!data?.status || !data?.result) return client.sendMessage(m.chat, { text: `❌ No response from AI`, edit: msg.key }, { quoted: m });
+          replyText = data.result;
+        }
+        pushHistory(geminiSessions, jid, 'user', text);
+        pushHistory(geminiSessions, jid, 'assistant', replyText);
+        await client.sendMessage(m.chat, { text: `*${replyText}*`, edit: msg.key }, { quoted: m });
+      } catch (err) {
+        m.reply('❌ Error getting AI response.');
+      }
+    }
+  },
+ 
+  // ── .vision / .imgai / .analyze / .geminivision — Image analysis via ravennsite ─────────
+  {
+  command: ['vision'],
+  aliases: ['imgai', 'analyze', 'llamavision'],
+  description: 'Analyze an image with LLaMA Vision AI (quote an image)',
+  category: 'ai',
+  handler: async (client, m, { reply, text }) => {
+    if (!m.quoted) return reply('📌 Reply to an image with a question.\nExample: *.vision2 what is this?*');
+    if (!text) return reply('❌ Provide a question about the image!\nExample: *.vision2 what is in this image?*');
+    const mime = m.quoted.mimetype || '';
+    if (!/image/.test(mime)) return reply('❌ Only image messages are supported.');
+    try {
+      await client.sendMessage(m.chat, { react: { text: '🤖', key: m.key } });
+      await reply('🔍 Analyzing your image...');
+
+      const filePath = await client.downloadAndSaveMediaMessage(m.quoted);
+      if (!filePath) return reply('❌ Failed to download image.');
+
+      const imageUrl = await uploadToUguu(filePath);
+      try { require('fs').unlinkSync(filePath); } catch (_) {}
+
+      let answer = await askProxy(
+        client,
+        [{ role: 'user', content: [{ type: 'text', text }, { type: 'image_url', image_url: { url: imageUrl } }] }],
+        VISION_MODEL
+      );
+      if (!answer) {
+        const res = await fetch(
+          `https://api.bk9.dev/ai/vision?q=${encodeURIComponent(text)}&image_url=${encodeURIComponent(imageUrl)}&model=meta-llama/llama-4-scout-17b-16e-instruct`
+        );
+        const data = await res.json();
+        if (!data?.status || !data?.BK9) return reply('❌ No response from Vision AI. Try again.');
+        answer = data.BK9;
+      }
+
+      await reply(`🤖 *Vision Analysis*\n\n${answer}`);
+    } catch (err) {
+      reply('❌ Failed to analyze image.');
+    }
+  }
+},
+ 
+  {
+    command: ['vision2'],
+    aliases: ['imgai2', 'analyze2', 'geminivision'],
+    description: 'Analyze an image with AI (quote an image)',
+    category: 'ai',
+    handler: async (client, m, { reply, text, api }) => {
+      try {
+        if (!m.quoted) return m.reply('📌 Reply to an image message to analyze it');
+        if (!text) return m.reply('❌ Provide a question/instruction!');
+        const mime = m.quoted.mimetype || '';
+        if (!/image/.test(mime)) return m.reply('❌ Only image messages are supported');
+
+        let filePath = await client.downloadAndSaveMediaMessage(m.quoted);
+        if (!filePath) return m.reply('❌ Failed to download image');
+
+        let imageUrl = await uploadToUguu(filePath);
+        await client.sendMessage(m.chat, { react: { text: '🤖', key: m.key } });
+        await m.reply('A moment analyzing your image...');
+
+        const res = await axios.get(
+          `${api}/ai/vision?image=${encodeURIComponent(imageUrl)}&q=${encodeURIComponent(text)}`
+        );
+        const result = res.data;
+        if (!result?.status || !result?.result) return m.reply('❌ No response from Vision AI');
+
+        await m.reply(result.result);
+
+        const fs = require('fs');
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      } catch (err) {
+        m.reply('❌ Failed to analyze image.');
+      }
+    }
+  },
+
+  
   {
     command: ['define'],
     description: 'Define a word',
@@ -264,80 +248,27 @@ module.exports = [
 
   {
     command: ['google'],
-    aliases: ['search', 'ddg'],
     description: 'Google search',
     category: 'ai',
-    handler: async (client, m, { text }) => {
-      if (!text) return m.reply('Provide a search term!\nEg: .google What is treason');
-
-      const decode = (value) => String(value)
-        .replace(/<[^>]+>/g, '')
-        .replace(/&amp;/g, '&')
-        .replace(/&quot;/g, '"')
-        .replace(/&#x27;|&#39;/g, "'")
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      const fromGoogle = async () => {
-        const key = process.env.GOOGLE_API_KEY;
-        const cx = process.env.GOOGLE_CX;
-        if (!key || !cx) return [];
-        const response = await axios.get('https://www.googleapis.com/customsearch/v1', {
-          params: { q: text, key, cx, num: 8 },
-          timeout: 20000,
-          validateStatus: () => true,
-        });
-        if (response.status !== 200 || !Array.isArray(response.data.items)) return [];
-        return response.data.items.map((item) => ({ title: item.title, snippet: item.snippet, link: item.link }));
-      };
-
-      const fromDuckDuckGo = async () => {
-        const response = await axios.post('https://html.duckduckgo.com/html/', new URLSearchParams({ q: text }).toString(), {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36',
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          timeout: 20000,
-          validateStatus: () => true,
-        });
-        if (response.status !== 200 || typeof response.data !== 'string') return [];
-        const results = [];
-        const blocks = response.data.split(/class="result\b/).slice(1);
-        for (const block of blocks) {
-          const link = block.match(/class="result__a"[^>]*href="([^"]+)"/) || block.match(/href="([^"]+)"[^>]*class="result__a"/);
-          const title = block.match(/class="result__a"[^>]*>([\s\S]*?)<\/a>/);
-          const snippet = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/);
-          if (!link || !title) continue;
-          let url = link[1].replace(/&amp;/g, '&');
-          const wrapped = url.match(/[?&]uddg=([^&]+)/);
-          if (wrapped) url = decodeURIComponent(wrapped[1]);
-          if (url.startsWith('//')) url = 'https:' + url;
-          if (!/^https?:\/\//.test(url) || /duckduckgo\.com\/y\.js/.test(url)) continue;
-          results.push({ title: decode(title[1]), snippet: snippet ? decode(snippet[1]) : '', link: url });
-          if (results.length >= 8) break;
+    handler: async (client, m, { reply, text }) => {
+      const axios = require("axios");
+        if (!text) {
+            m.reply('Provide a search term!\nEg: .Google What is treason')
+            return;
         }
-        return results;
-      };
-
-      try {
-        let results = await fromGoogle().catch(() => []);
-        if (!results.length) results = await fromDuckDuckGo().catch(() => []);
-        if (!results.length) return m.reply('❌ Unable to find a result right now. Try again in a moment.');
-
-        let out = `🔍 *Search results for:* ${text}\n\n`;
-        results.forEach((item, i) => {
-          out += `*${i + 1}. ${item.title}*\n`;
-          if (item.snippet) out += `${item.snippet}\n`;
-          out += `🌐 ${item.link}\n\n`;
-        });
-        await m.reply(out.trim());
-      } catch (error) {
-        m.reply('❌ Search failed. Please try again later.');
-      }
-    }
+        let {
+            data
+        } = await axios.get(`https://www.googleapis.com/customsearch/v1?q=${text}&key=AIzaSyDMbI3nvmQUrfjoCJYLS69Lej1hSXQjnWI&cx=baf9bdb0c631236e5`)
+        if (data.items.length == 0) {
+            m.reply("❌ Unable to find a result")
+            return;
+        }
+        let tex = `SEARCH FROM GOOGLE\n🔍 Term:- ${text}\n\n`;
+        for (let i = 0; i < data.items.length; i++) {
+            tex += `🪧 Title:- ${data.items[i].title}\n🖥 Description:- ${data.items[i].snippet}\n🌐 Link:- ${data.items[i].link}\n\n`
+        }
+        m.reply(tex)
+     }
   },
 
 
